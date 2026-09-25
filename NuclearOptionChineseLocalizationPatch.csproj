@@ -1,0 +1,170 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ==================================================================
+       GameDir —— 游戏根目录的解析链（可移植，不写入任何机器专属路径）
+
+       按优先级取第一个非空值：
+         1. 命令行       dotnet build -p:GameDir="D:\Games\Nuclear Option"
+         2. 环境变量     set NUCLEAR_OPTION_DIR=D:\Games\Nuclear Option
+         3. 本地覆盖     <仓库>\GameDir.props          （被 .gitignore 忽略）
+         4. 相对默认     <仓库>\..\..                  （仓库位于 <游戏>\Git\<repo> 时的零配置路径）
+
+       因此：仓库克隆到任意目录、游戏装在任意盘符，都能构建，无需改动任何入库文件。
+       ================================================================== -->
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>NuclearOptionChineseLocalizationPatch</AssemblyName>
+    <Product>Nuclear Option Chinese Localization Patch</Product>
+    <Version>1.0.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <RestoreAdditionalProjectSources>
+      https://api.nuget.org/v3/index.json;
+      https://nuget.bepinex.dev/v3/index.json;
+      https://nuget.samboy.dev/v3/index.json
+    </RestoreAdditionalProjectSources>
+    <RootNamespace>NuclearOptionChineseLocalizationPatch</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+    <!-- 可复现构建：不把本机绝对路径写进产物。
+         默认情况下 Roslyn 会把 PDB 的**绝对路径**写进 PE 的调试目录，于是发布的 DLL
+         里会残留 <盘符>\...\obj\Release\net472\*.pdb 这样的本机路径。
+         PathMap 把它重写成占位前缀；Deterministic 让同一份源码在任何机器上产出同样的二进制。 -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=/_build/</PathMap>
+  </PropertyGroup>
+
+  <!-- 优先级 2：环境变量 -->
+  <PropertyGroup Condition="'$(GameDir)' == '' AND '$(NUCLEAR_OPTION_DIR)' != ''">
+    <GameDir>$(NUCLEAR_OPTION_DIR)</GameDir>
+  </PropertyGroup>
+
+  <!-- 优先级 3：本机覆盖文件（不入版本库） -->
+  <Import Project="GameDir.props" Condition="'$(GameDir)' == '' AND Exists('GameDir.props')" />
+
+  <!-- 优先级 4：仓库相对位置 -->
+  <PropertyGroup Condition="'$(GameDir)' == ''">
+    <GameDir>$(MSBuildThisFileDirectory)..\..</GameDir>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <GameDir>$([System.IO.Path]::GetFullPath('$(GameDir)'))</GameDir>
+    <PluginDir>$(GameDir)\BepInEx\plugins\NuclearOptionChineseLocalizationPatch</PluginDir>
+    <!-- 判据：游戏程序集必须真实存在，否则说明 GameDir 指错了 -->
+    <GameAssembly>$(GameDir)\NuclearOption_Data\Managed\Assembly-CSharp.dll</GameAssembly>
+    <!-- 数据文件源目录（仓库内） -->
+    <DataDir>data</DataDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
+    <PackageReference Include="BepInEx.Core" Version="5.*" />
+    <PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="UnityEngine">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AssetBundleModule">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\UnityEngine.AssetBundleModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextCoreFontEngineModule">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\UnityEngine.TextCoreFontEngineModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework.TrimEnd(`0123456789`))' == 'net'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.2" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- 构建前先确认 GameDir 指对了，否则给出人话报错（而不是一堆找不到 dll 的噪音）。
+       挂在 BeforeBuild 而不是 ResolveReferences：后者的依赖项会先跑，
+       MSB3245「未能解析此引用」的刷屏警告会先冒出来，把真正的报错埋掉。 -->
+  <Target Name="ValidateGameDir" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(GameAssembly)')"
+           Text="游戏程序集不存在：$(GameAssembly)&#xD;&#xA;当前 GameDir = $(GameDir)&#xD;&#xA;请任选一种方式指定游戏根目录（含 NuclearOption_Data 的那一层）：&#xD;&#xA;  1) dotnet build -p:GameDir=&quot;...\Nuclear Option&quot;&#xD;&#xA;  2) set NUCLEAR_OPTION_DIR=...\Nuclear Option&#xD;&#xA;  3) 复制 GameDir.props.example 为 GameDir.props 并填入路径" />
+  </Target>
+
+  <!-- ==================================================================
+       部署
+       PostBuild  —— 只推 DLL + 首次安装引导（数据文件仅当目标不存在时补一次），
+                     以免覆盖你在游戏里热改过的 translation.json 进度。
+       DeployData —— 显式全量同步数据文件（会覆盖，属有意为之）。
+                     注意：它 **不触发编译**，改了 C# 要先 -t:Rebuild。
+       ================================================================== -->
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <ItemGroup>
+      <AllOutputFiles Include="$(TargetDir)*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AllOutputFiles)" DestinationFolder="$(PluginDir)" />
+
+    <!-- 首次安装引导。每个文件单独一条 Copy，条件写成「源存在 且 目标不存在」——
+         不能合成一个带通配符的 Copy：字面路径即使不存在也会被当成一项，直接抛 MSB3030。 -->
+    <Copy SourceFiles="$(DataDir)\translation.json" DestinationFolder="$(PluginDir)"
+          Condition="Exists('$(DataDir)\translation.json') AND !Exists('$(PluginDir)\translation.json')" />
+    <Copy SourceFiles="$(DataDir)\exclusions.json" DestinationFolder="$(PluginDir)"
+          Condition="Exists('$(DataDir)\exclusions.json') AND !Exists('$(PluginDir)\exclusions.json')" />
+    <Copy SourceFiles="$(DataDir)\force_scopes.json" DestinationFolder="$(PluginDir)"
+          Condition="Exists('$(DataDir)\force_scopes.json') AND !Exists('$(PluginDir)\force_scopes.json')" />
+    <Copy SourceFiles="$(DataDir)\fonts\font.ttf" DestinationFolder="$(PluginDir)"
+          Condition="Exists('$(DataDir)\fonts\font.ttf') AND !Exists('$(PluginDir)\font.ttf')" />
+    <!-- scopes/ 整个目录一次性引导：目录已存在就完全不动，避免覆盖用户的 scope 定制 -->
+    <Copy SourceFiles="@(BootstrapScopes)" DestinationFolder="$(PluginDir)\scopes"
+          Condition="!Exists('$(PluginDir)\scopes')" />
+  </Target>
+
+  <ItemGroup>
+    <BootstrapScopes Include="$(DataDir)\scopes\*.json" />
+  </ItemGroup>
+
+  <!-- 显式部署：把仓库里的数据文件全量推送到插件目录。
+         用法：dotnet build -c Release -t:DeployData -->
+  <Target Name="DeployData" DependsOnTargets="ValidateGameDir;PostBuild">
+    <ItemGroup>
+      <!-- 用通配符而不是逐个字面路径：字面路径即使文件不存在也会变成一项，会让 Copy
+           直接抛 MSB3030。通配符匹配不到就是空集，静默跳过。
+           同时排除本地回滚备份，避免它们被一起推到插件目录。 -->
+      <DeployFiles Include="$(DataDir)\*.json"
+                   Exclude="$(DataDir)\*.bak;$(DataDir)\*.bak_*;$(DataDir)\*.bak.*" />
+      <DeployFiles Include="$(DataDir)\*.ttf" />
+      <DeployFiles Include="$(DataDir)\fonts\*.ttf" />
+    </ItemGroup>
+    <Copy SourceFiles="@(DeployFiles)" DestinationFolder="$(PluginDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(BootstrapScopes)" DestinationFolder="$(PluginDir)\scopes" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="[DEPLOY] 数据文件已同步到 $(PluginDir)" />
+  </Target>
+
+</Project>

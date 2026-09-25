@@ -1,0 +1,17 @@
+<!--
+  本机覆盖文件（可选）。
+
+  GameDir 的解析链会按顺序取第一个成立的值：
+    1. 命令行       dotnet build -p:GameDir="D:\Games\Nuclear Option"
+    2. 环境变量     set NUCLEAR_OPTION_DIR=D:\Games\Nuclear Option
+    3. 本文件       <仓库>\GameDir.props     ← 你在这里
+    4. 相对默认     <仓库>\..\..              （仓库位于 <游戏>\Git\<repo> 时零配置生效）
+
+  只有把仓库放在别处、或游戏装在非默认位置时才需要这个文件。
+  复制为 GameDir.props 并填入你的路径即可；该文件已被 .gitignore 忽略，不会外流。
+-->
+<Project>
+  <PropertyGroup>
+    <GameDir>C:\Program Files (x86)\Steam\steamapps\common\Nuclear Option</GameDir>
+  </PropertyGroup>
+</Project>

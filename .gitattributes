@@ -1,0 +1,23 @@
+# 行尾策略。
+#
+# 兜底：关闭所有文件的自动行尾转换。否则在 core.autocrlf=true 的机器上，
+# checkout 出来的文件会被改成 CRLF，而 Python 工具链写回时用 LF，
+# 于是整个文件表现为「每行都改了」，真正的改动淹没在噪声里。
+* -text
+
+# 文本文件显式锁定为 LF。
+# data/translation.json 必须单独声明：它由维护脚本以 LF 写出，
+# 若按 *.json 的规则转成 CRLF，下一次工具写入就会产生整文件行尾假 diff。
+*.cs            text eol=lf
+*.md            text eol=lf
+*.txt           text eol=lf
+*.json          text eol=lf
+*.gitignore     text eol=lf
+*.gitattributes text eol=lf
+
+# 二进制资产：字体是唯一一个，且必须保持字节不变 ——
+# 它内含 OFL 1.1 的许可元数据，任何换行转换都会破坏字体文件。
+*.ttf    binary
+*.dll    binary
+*.png    binary
+*.jpg    binary

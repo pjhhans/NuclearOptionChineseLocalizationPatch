@@ -1,0 +1,24 @@
+# 构建产物
+bin/
+obj/
+*.user
+*.suo
+
+# 本机路径覆盖（每台机器自己填，见 GameDir.props.example）
+GameDir.props
+
+# 词表的本地回滚备份（由维护脚本生成，不应入库）
+data/*.bak
+data/*.bak_*
+data/*.bak.*
+
+# 运行期累积的诊断产物：游戏里跑一轮就会生成，内容是当时的漏译快照，
+# 属于「工作清单」而不是「源码」，只该留在本机。
+missing.json
+untranslated.json
+
+# 编辑器
+.vs/
+.idea/
+.vscode/
+*.swp
