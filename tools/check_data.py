@@ -9,6 +9,7 @@
   4. 译文里不应出现原文没有的括号         —— 译名规范
   5. 同原文多译文                         —— 同一段英文在表里只应有一个译文
   6. 片段键长度非空                       —— 空的片段键会匹配一切
+  7. 键严格按码点升序、且无字面重复键     —— 保证「批量补词条」永远是干净的最小 diff
 
 用法:
     python tools/check_data.py [数据目录]
@@ -70,6 +71,33 @@ def classify(table):
     return counts
 
 
+def check_key_order(path):
+    """键必须严格按码点升序，且不得有字面重复键。
+
+    为什么单独查这一条：`json.loads` 装进 dict 会**静默丢掉重复键**，
+    于是上面所有基于 dict 的检查都看不到它们，`len(table)` 也会少报。
+    而「排序」是批量补词条流程的约定 —— 靠 append + 稳定排序 保证 diff 只动新增行；
+    一旦顺序被打乱，一次补 10 条会在 git 里显示成整块重排，review 就失效了。
+    """
+    pairs = json.loads(open(path, "rb").read().decode("utf-8-sig"),
+                       object_pairs_hook=list)
+    keys = [k for k, _ in pairs]
+
+    if len(keys) != len(set(keys)):
+        seen, dup = set(), []
+        for k in keys:
+            if k in seen and k not in dup:
+                dup.append(k)
+            seen.add(k)
+        fail("存在字面重复键（json 装 dict 时会静默丢键）: %r" % dup[:5])
+
+    violations = [(keys[i], keys[i + 1]) for i in range(len(keys) - 1)
+                  if keys[i] > keys[i + 1]]
+    if violations:
+        fail("键未按码点升序，%d 处（会破坏最小 diff）: %r"
+             % (len(violations), violations[:3]))
+
+
 def check_case_duplicates(table):
     buckets = collections.defaultdict(list)
     for key in table:
@@ -122,6 +150,8 @@ def main():
 
     table = load_table(table_path)
     print("词表: %d 条  (%s)" % (len(table), table_path))
+
+    check_key_order(table_path)
 
     counts = classify(table)
     print("  普通 %d / 模板 %d / 片段 %d"
