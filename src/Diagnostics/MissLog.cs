@@ -39,10 +39,31 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
         internal int FragmentCount => _fragments.Count;
         internal int LongTextCount => _longTexts.Count;
 
+        /// <summary>是否记录。关掉后不再累积、也不写盘。</summary>
+        internal bool Recording { get; set; } = true;
+
+        private const int RecentCapacity = 12;
+        private readonly Queue<string> _recent = new Queue<string>(RecentCapacity);
+
+        /// <summary>最近 N 条漏译片段，最新的在最前。窗口诊断区用。</summary>
+        internal string[] SnapshotRecent()
+        {
+            var result = new string[_recent.Count];
+            int i = 0;
+            foreach (string s in _recent) result[i++] = s;
+            return result;
+        }
+
         internal void Record(string fragment, string scope)
         {
             if (string.IsNullOrEmpty(fragment)) return;
+
             string key = string.IsNullOrEmpty(scope) ? fragment : "[" + scope + "]" + fragment;
+
+            if (_recent.Count >= RecentCapacity) _recent.Dequeue();
+            _recent.Enqueue(key.Length <= 52 ? key : key.Substring(0, 52) + "…");
+
+            if (!Recording) return;
             if (_fragments.Add(key)) _dirty = true;
         }
 
@@ -50,8 +71,18 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
         internal void RecordLong(string original, string scope)
         {
             if (string.IsNullOrEmpty(original) || original.Length < LongTextThreshold) return;
+            if (!Recording) return;
             string key = string.IsNullOrEmpty(scope) ? original : "[" + scope + "]" + original;
             if (_longTexts.Add(key)) _dirty = true;
+        }
+
+        /// <summary>清空全部记录。<b>刻意置脏</b>，好让随后的 <see cref="Flush"/> 把空数组写进磁盘。</summary>
+        internal void Clear()
+        {
+            _fragments.Clear();
+            _longTexts.Clear();
+            _recent.Clear();
+            _dirty = true;
         }
 
         /// <summary>按需落盘（默认间隔 30 秒）。</summary>

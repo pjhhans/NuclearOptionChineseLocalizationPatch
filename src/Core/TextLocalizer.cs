@@ -36,6 +36,47 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         internal bool Enabled { get; set; } = true;
         internal long PassThroughCount { get; private set; }
         internal long MissCount { get; private set; }
+        internal long HitCount { get; private set; }
+        internal int CacheCount => _cache.Count;
+
+        /// <summary>是否记录「最近命中」。关掉可省下窗口诊断区的开销。</summary>
+        internal bool CaptureRecent { get; set; } = true;
+
+        private const int RecentCapacity = 12;
+        private readonly Queue<string[]> _recentHits = new Queue<string[]>(RecentCapacity);
+
+        /// <summary>递归深度。只有最外层调用才记进「最近命中」，否则子片段会把列表刷满。</summary>
+        private int _depth;
+
+        /// <summary>
+        /// 最近 N 条「原文 → 译文」，最新的在最前。
+        ///
+        /// <para>这是排查「某处为什么没翻」最直接的工具：窗口里能当场看到一条文本
+        /// 到底是被命中了（进了这个列表）还是被漏掉了（进漏译列表）。</para>
+        /// </summary>
+        internal string[] SnapshotRecentHits()
+        {
+            var result = new string[_recentHits.Count];
+            int i = 0;
+            foreach (string[] pair in _recentHits) result[i++] = pair[0] + "  →  " + pair[1];
+            return result;
+        }
+
+        private void RecordHit(string original, string translated)
+        {
+            HitCount++;
+            if (!CaptureRecent) return;
+            if (_recentHits.Count >= RecentCapacity) _recentHits.Dequeue();
+            _recentHits.Enqueue(new[] { Clip(original), Clip(translated) });
+        }
+
+        private static string Clip(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            string flat = s.Replace('\n', ' ').Replace('\r', ' ').Replace('\u000B', ' ');
+            while (flat.Contains("  ")) flat = flat.Replace("  ", " ");
+            return flat.Length <= 42 ? flat.Trim() : flat.Substring(0, 42).Trim() + "…";
+        }
 
         internal TextLocalizer(LocalizationTable table, ExclusionRules exclusions, MissLog missLog)
         {
@@ -59,8 +100,30 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// 调用方据此判断是否需要写回（通常是 <c>结果 != 原文 &amp;&amp; 结果含中文</c>）。
         ///
         /// <para><paramref name="scope"/> 由补丁层从组件名推断，用于区分同名不同义的原文。</para>
+        ///
+        /// <para>本方法是<b>薄壳</b>，只负责「最近命中」记录；真正的判定在
+        /// <see cref="LocalizeInner"/>。递归调用走的也是本方法，所以用
+        /// <c>_depth</c> 保证只有最外层的那次被记录。</para>
         /// </summary>
         internal string Localize(string text, string scope)
+        {
+            _depth++;
+            try
+            {
+                string result = LocalizeInner(text, scope);
+                if (_depth == 1 && !ReferenceEquals(result, text) && result != text && HasChinese(result))
+                {
+                    RecordHit(text, result);
+                }
+                return result;
+            }
+            finally
+            {
+                _depth--;
+            }
+        }
+
+        private string LocalizeInner(string text, string scope)
         {
             if (string.IsNullOrEmpty(text)) return text;
 

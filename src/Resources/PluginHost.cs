@@ -1,19 +1,20 @@
 using System;
+using NuclearOptionChineseLocalizationPatch.Diagnostics;
 using UnityEngine;
 
 namespace NuclearOptionChineseLocalizationPatch.Resources
 {
     /// <summary>
-    /// 承载所有「必须每帧活着」的逻辑。
+    /// 承载所有「必须每帧活着」的逻辑：热键、兜底扫描、防回写驱动、设置窗口。
     ///
     /// <para><b>为什么不直接写在插件类里。</b>BepInEx 在「首个真实场景就绪之前」就加载插件，
     /// 此时创建的一切 GameObject —— 包括 BepInEx 自己的管理器对象 —— 都会在首个真实场景
     /// 加载时被 Unity <b>一并销毁</b>，即使调用过 <c>DontDestroyOnLoad</c>。
-    /// 挂在被销毁组件上的 <c>Update</c> 从此永不执行，于是热重载、兜底扫描、防回写补偿
-    /// 全部静默失效 —— 表现为「按键没反应 + 界面仍是英文」，而日志里看不出任何异常
-    /// （初始化那几行照常打印，因为它们在 <c>Awake</c> 里）。</para>
+    /// 挂在被销毁组件上的 <c>Update</c>/<c>OnGUI</c> 从此永不执行，于是热键、兜底扫描、
+    /// 防回写补偿、设置窗口全部静默失效 —— 表现为「按键没反应 + 界面仍是英文」，
+    /// 而日志里看不出任何异常（初始化那几行照常打印，因为它们在 <c>Awake</c> 里）。</para>
     ///
-    /// <para><b>对策</b>：这三件事挪到这个延迟创建、可被反复重建的独立宿主上。
+    /// <para><b>对策</b>：这些事情挪到这个延迟创建、可被反复重建的独立宿主上。
     /// 重建触发点三处互为备份：首次 <c>Awake</c> 末尾试建、每次场景加载事件、
     /// 以及每次翻译命中时的看门狗（见 <see cref="Patching.PatchHelpers"/>）。</para>
     ///
@@ -27,9 +28,6 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
         /// <summary>重建防抖间隔。看门狗挂在高频路径上，未命中时必须只花一次静态比较。</summary>
         private const float EnsureDebounceSeconds = 1f;
-
-        /// <summary>兜底扫描间隔。这是「新出现的文本多久变中文」的实际决定者。</summary>
-        private const float ScanIntervalSeconds = 1f;
 
         private float _nextScanTime;
 
@@ -61,17 +59,24 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
                 var go = new GameObject("NuclearOptionChinese_Host");
                 UnityEngine.Object.DontDestroyOnLoad(go);
                 _instance = go.AddComponent<PluginHost>();
-                Diagnostics.Log.Info("逐帧宿主已就绪（热重载 / 兜底扫描 / 防回写生效）。");
+                RuntimeStatus.HostBuilds++;
+                RuntimeStatus.HostAlive = true;
+                Log.Info("逐帧宿主已就绪（热重载 / 兜底扫描 / 防回写 / F11 设置窗口生效）。");
             }
             catch (Exception ex)
             {
-                Diagnostics.Log.Warn("逐帧宿主创建失败，热重载与兜底扫描将不可用：" + ex.Message);
+                Log.Warn("逐帧宿主创建失败，热键与兜底扫描将不可用：" + ex.Message);
             }
         }
 
+        /// <summary>
+        /// 扫描间隔由窗口的滑块实时改写（<see cref="SettingsWindow.ScanInterval"/>），
+        /// 每帧读取，所以改完立即生效，无需写回任何字段。
+        /// </summary>
         private void Update()
         {
-            HandleHotkey();
+            RuntimeStatus.HostAlive = true;
+            HandleHotkeys();
             HandleScan();
             LocalizationPlugin.MissLog?.FlushIfDue();
         }
@@ -85,27 +90,45 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
             Patching.RewriteGuard.Tick();
         }
 
-        private static void HandleHotkey()
+        /// <summary>
+        /// IMGUI 窗口。放在宿主上而不是插件对象上 —— 插件对象活不过第一个真实场景，
+        /// 挂在那里的话窗口按一次就再也打不开了。
+        /// </summary>
+        private void OnGUI()
         {
-            KeyCode key = LocalizationPlugin.ReloadKey;
-            if (key == KeyCode.None) return;
-            if (!Input.GetKeyDown(key)) return;
+            SettingsWindow.Draw();
+        }
 
-            Diagnostics.Log.Info("收到热重载请求。");
-            LocalizationPlugin.ReloadFromDisk();
+        private static void HandleHotkeys()
+        {
+            if (KeyDown(LocalizationPlugin.WindowKey)) SettingsWindow.Toggle();
+            if (KeyDown(LocalizationPlugin.ReloadKey))
+            {
+                Log.Info("收到直接热重载请求。");
+                LocalizationPlugin.ReloadFromDisk();
+            }
+        }
+
+        private static bool KeyDown(KeyCode key)
+        {
+            return key != KeyCode.None && Input.GetKeyDown(key);
         }
 
         private void HandleScan()
         {
+            float interval = SettingsWindow.ScanInterval;
+            if (interval <= 0f) interval = 1f;
             if (Time.realtimeSinceStartup < _nextScanTime) return;
-            _nextScanTime = Time.realtimeSinceStartup + ScanIntervalSeconds;
+            _nextScanTime = Time.realtimeSinceStartup + interval;
             LocalizationPlugin.ScanScene();
         }
 
         private void OnDestroy()
         {
             if (ReferenceEquals(_instance, this)) _instance = null;
-            Diagnostics.Log.Debug("逐帧宿主被销毁，将在下次需要时重建。");
+            RuntimeStatus.HostAlive = false;
+            SettingsWindow.Hide();
+            Log.Debug("逐帧宿主被销毁，将在下次需要时重建。");
         }
     }
 }

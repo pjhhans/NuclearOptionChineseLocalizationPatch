@@ -185,6 +185,63 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         }
 
         /// <summary>
+        /// 把组件上的中文还原回英文。供「关闭翻译」使用。
+        ///
+        /// <para>这里<b>刻意不</b>套用 <see cref="TryLocalize"/> 的「只写含中文的结果」收敛性限制 ——
+        /// 该限制的目的是防止英文↔英文来回改写，而这里的目标恰恰是写回英文。</para>
+        /// </summary>
+        internal static void RevertInPlace(TMP_Text text)
+        {
+            if (text == null || _tmpField == null) return;
+            try
+            {
+                string current = _tmpField(text);
+                string original;
+                if (!TryLookupOriginal(current, out original)) return;
+                _tmpField(text) = original;
+            }
+            catch (Exception ex)
+            {
+                Diagnostics.Log.Debug("还原失败：" + ex.Message);
+            }
+        }
+
+        internal static void RevertInPlace(Text text)
+        {
+            if (text == null || _legacyField == null) return;
+            try
+            {
+                string current = _legacyField(text);
+                string original;
+                if (!TryLookupOriginal(current, out original)) return;
+                _legacyField(text) = original;
+            }
+            catch (Exception ex)
+            {
+                Diagnostics.Log.Debug("还原失败：" + ex.Message);
+            }
+        }
+
+        /// <summary>当前文本是中文时，反查出它对应的英文原文。</summary>
+        private static bool TryLookupOriginal(string current, out string original)
+        {
+            original = null;
+            if (string.IsNullOrEmpty(current)) return false;
+            if (!Core.TextLocalizer.HasChinese(current)) return false;
+
+            // 优先查「我们写下去的那一份」：模板与片段拼接的结果是运行期拼出来的，
+            // 词表的反向索引里根本没有这一项。
+            if (WrittenOriginal.TryGetValue(current, out original) && !string.IsNullOrEmpty(original))
+            {
+                return true;
+            }
+
+            var localizer = LocalizationPlugin.Localizer;
+            return localizer != null && localizer.TryReverseLookup(current, out original)
+                   && !string.IsNullOrEmpty(original);
+        }
+
+        /// <summary>
         /// 读回还原：把中文译文反查回英文原文。
         ///
         /// <para><b>为什么必须做。</b>游戏里大量「读回比较后再写回」的用法，例如
@@ -198,22 +255,8 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// </summary>
         internal static void RestoreOriginalOnRead(ref string value)
         {
-            if (string.IsNullOrEmpty(value)) return;
-            if (!Core.TextLocalizer.HasChinese(value)) return;
-
             string original;
-            if (WrittenOriginal.TryGetValue(value, out original))
-            {
-                value = original;
-                return;
-            }
-
-            // 退一步：用词表的反向索引（覆盖普通词条）。
-            var localizer = LocalizationPlugin.Localizer;
-            if (localizer != null && localizer.TryReverseLookup(value, out original))
-            {
-                value = original;
-            }
+            if (TryLookupOriginal(value, out original)) value = original;
         }
     }
 }

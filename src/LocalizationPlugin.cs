@@ -41,6 +41,11 @@ namespace NuclearOptionChineseLocalizationPatch
         internal static ExclusionRules Exclusions { get; private set; }
         internal static MissLog MissLog { get; private set; }
         internal static TextLocalizer Localizer { get; private set; }
+
+        /// <summary>呼出设置窗口的热键（默认 F11）。</summary>
+        internal static KeyCode WindowKey { get; private set; }
+
+        /// <summary>不打开窗口、直接热重载词表的热键。默认未设置。</summary>
         internal static KeyCode ReloadKey { get; private set; }
 
         private Harmony _harmony;
@@ -55,13 +60,18 @@ namespace NuclearOptionChineseLocalizationPatch
             Table = new LocalizationTable();
             Exclusions = new ExclusionRules();
             MissLog = new MissLog(PluginPaths.BaseDir);
+            MissLog.Recording = Settings.LogMisses.Value;
             Localizer = new TextLocalizer(Table, Exclusions, MissLog);
             Localizer.Enabled = Settings.Enabled.Value;
             Localizer.SetCacheLimit(Settings.TranslationCacheLimit.Value);
 
+            RuntimeStatus.DataDir = PluginPaths.BaseDir;
+            SettingsWindow.ScanInterval = ClampInterval(Settings.ScanIntervalSeconds.Value);
+
             ReloadData(initial: true);
             CjkFontProvider.Load();
-            ReloadKey = ParseKeyCode(Settings.ReloadHotkey.Value);
+            WindowKey = ParseKeyCode(Settings.ToggleWindowHotkey.Value);
+            ReloadKey = ParseKeyCode(Settings.ReloadDataHotkey.Value);
             ApplyPatches();
             LogHarmonySelfTest();
 
@@ -71,15 +81,25 @@ namespace NuclearOptionChineseLocalizationPatch
             PluginHost.Ensure();
 
             Log.Info($"{PluginName} v{PluginVersion} 已启动。{PluginPaths.Describe()}");
+            Log.Info($"按 {Settings.ToggleWindowHotkey.Value} 打开设置与诊断窗口。");
         }
 
-        /// <summary>（重新）载入词表与排除名单。热重载与启动都走这条路径。</summary>
+        private static float ClampInterval(float seconds)
+        {
+            if (seconds < 0.1f) return 0.1f;
+            return seconds > 5f ? 5f : seconds;
+        }
+
+        /// <summary>（重新）载入词表与排除名单。窗口按钮与直接热重载都走这条路径。</summary>
         private static void ReloadData(bool initial)
         {
             string missing;
             if (!PluginPaths.IsReady(out missing))
             {
                 Log.Error("缺少词表文件，插件不会翻译任何文本：" + missing);
+                RuntimeStatus.LastReloadAt = RuntimeStatus.Stamp();
+                RuntimeStatus.LastReloadOk = false;
+                RuntimeStatus.LastReloadDetail = "缺少数据文件：" + missing;
                 return;
             }
 
@@ -88,14 +108,20 @@ namespace NuclearOptionChineseLocalizationPatch
             Localizer.ClearCache();
             RewriteGuard.Clear();
 
+            RuntimeStatus.LastReloadAt = RuntimeStatus.Stamp();
+            RuntimeStatus.LastReloadOk = tableOk;
+            RuntimeStatus.ReloadCount++;
+
             if (!tableOk)
             {
+                RuntimeStatus.LastReloadDetail = initial ? "首次载入失败" : "失败（已中止，保留旧词表）";
                 Log.Error(initial
                     ? "首次载入词表失败，本次启动将无译文可用。"
                     : "热重载已中止：词表未替换，界面维持现状（旧词表仍在工作）。");
                 return;
             }
 
+            RuntimeStatus.LastReloadDetail = initial ? "启动载入成功" : "热重载成功";
             Log.Info(
                 $"词表已载入：普通 {Table.GlobalCount} / 模板 {Table.TemplateCount} / " +
                 $"片段 {Table.FragmentCount} / 作用域 {Table.ScopeCount}；" +
@@ -103,8 +129,51 @@ namespace NuclearOptionChineseLocalizationPatch
                 (initial ? "" : "（热重载）"));
         }
 
-        /// <summary>热重载入口，供逐帧宿主的热键分支调用。</summary>
+        /// <summary>热重载入口，供逐帧宿主的（可选）直接热键调用。</summary>
         internal static void ReloadFromDisk() => ReloadData(initial: false);
+
+        /// <summary>清空翻译缓存与防回写跟踪状态。</summary>
+        internal static void ClearCaches()
+        {
+            Localizer?.ClearCache();
+            RewriteGuard.Clear();
+        }
+
+        /// <summary>
+        /// 开关翻译。
+        ///
+        /// <para>关闭时除了停用翻译，还要把屏幕上<b>已经显示成中文</b>的文本还原回英文 ——
+        /// 否则用户按下按钮后什么都没变，会以为按钮坏了。还原走
+        /// <see cref="PatchHelpers.RevertInPlace"/>（它不做「只写中文」的收敛性限制，
+        /// 因为这里的目标恰恰是写回英文）。</para>
+        /// </summary>
+        internal static void SetEnabled(bool enabled)
+        {
+            if (Localizer == null) return;
+            Localizer.Enabled = enabled;
+            ClearCaches();
+            Log.Info(enabled ? "翻译已启用。" : "翻译已关闭，正在还原英文。");
+
+            if (enabled) ScanScene();
+            else RevertScene();
+        }
+
+        /// <summary>把当前场景里所有已中文化的文本还原成英文。</summary>
+        internal static void RevertScene()
+        {
+            try
+            {
+                var all = UnityEngine.Resources.FindObjectsOfTypeAll<TMP_Text>();
+                for (int i = 0; i < all.Length; i++) PatchHelpers.RevertInPlace(all[i]);
+
+                var legacy = UnityEngine.Resources.FindObjectsOfTypeAll<UnityEngine.UI.Text>();
+                for (int i = 0; i < legacy.Length; i++) PatchHelpers.RevertInPlace(legacy[i]);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("还原失败：" + ex.Message);
+            }
+        }
 
         /// <summary>
         /// 扫一遍场景里所有文本组件并原地翻译。
@@ -116,6 +185,8 @@ namespace NuclearOptionChineseLocalizationPatch
         internal static void ScanScene()
         {
             if (Localizer == null || !Localizer.Enabled) return;
+
+            RuntimeStatus.Scans++;
 
             // 顺带补登记字体回退链：TMP_Settings 在场景切换时可能被重新加载，
             // 回退链会被重置。搭这次扫描的顺风车最省事。
@@ -137,6 +208,8 @@ namespace NuclearOptionChineseLocalizationPatch
 
         private static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
+            RuntimeStatus.LastScene = scene.name;
+            RuntimeStatus.SceneLoads++;
             Log.Info($"场景已加载：{scene.name}。");
             // 强制重建：这是宿主最主要的复活点，不能被防抖挡掉。
             PluginHost.Ensure(force: true);
