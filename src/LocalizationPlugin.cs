@@ -27,7 +27,7 @@ namespace NuclearOptionChineseLocalizationPatch
     {
         internal const string Guid = "com.nuclearoption.zhcn.localization";
         internal const string PluginName = "Nuclear Option Chinese Localization Patch";
-        internal const string PluginVersion = "1.1.0";
+        internal const string PluginVersion = "1.2.0";
 
         // ------------------------------------------------------------------
         // 数据一律挂在静态属性上。
