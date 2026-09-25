@@ -3,6 +3,7 @@ using HarmonyLib;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using Host = NuclearOptionChineseLocalizationPatch.Resources.PluginHost;
 
 namespace NuclearOptionChineseLocalizationPatch.Patching
 {
@@ -78,7 +79,11 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             translated = original;
             if (string.IsNullOrEmpty(original)) return false;
 
-            var localizer = LocalizationPlugin.Instance?.Localizer;
+            // 看门狗：逐帧宿主会在场景加载时被 Unity 一并销毁。这条路径是翻译命中的
+            // 必经之处，也就是最后一道重建机会。宿主已存在时它只做一次静态字段比较。
+            Host.Ensure();
+
+            var localizer = LocalizationPlugin.Localizer;
             if (localizer == null) return false;
 
             string scope = ScopeOf(comp);
@@ -188,7 +193,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             }
 
             // 退一步：用词表的反向索引（覆盖普通词条）。
-            var localizer = LocalizationPlugin.Instance?.Localizer;
+            var localizer = LocalizationPlugin.Localizer;
             if (localizer != null && localizer.TryReverseLookup(value, out original))
             {
                 value = original;

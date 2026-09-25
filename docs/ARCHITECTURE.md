@@ -74,7 +74,7 @@ UI 组件下才成立的键，避免污染全局表。
 
 ```
 src/
-├─ LocalizationPlugin.cs        插件入口：生命周期、配置、热重载
+├─ LocalizationPlugin.cs        插件入口：启动编排、静态数据、热重载（§3.1）
 ├─ Configuration/
 │   └─ ModSettings.cs           BepInEx ConfigEntry 封装
 ├─ Core/
@@ -87,14 +87,57 @@ src/
 ├─ Patching/
 │   ├─ TmpPatches.cs            TMP_Text 系列补丁
 │   ├─ LegacyUiPatches.cs       UnityEngine.UI.Text 补丁
-│   ├─ RefreshPatches.cs        反射式场景刷新挂钩
+│   ├─ PatchHelpers.cs          补丁公共入口：查表、原地翻译、读回还原
 │   └─ RewriteGuard.cs          防回写闪烁（§5.2）
 ├─ Resources/
 │   ├─ PluginPaths.cs           数据文件路径解析
-│   └─ CjkFontProvider.cs       中文字体加载与 TMP 回退注册
+│   ├─ CjkFontProvider.cs       中文字体加载与 TMP 回退注册
+│   └─ PluginHost.cs            逐帧宿主：热键 / 兜底扫描 / 防回写驱动（§3.1）
 └─ Diagnostics/
-    └─ MissLog.cs               漏译记录
+    ├─ Log.cs                   日志封装
+    ├─ MissLog.cs               漏译记录
+    └─ HarmonySelfTest.cs       自打补丁验证 Harmony 是否真生效
 ```
+
+### 3.1 生命周期：为什么需要独立的逐帧宿主
+
+**这是本工程最容易踩、也最隐蔽的坑，改动入口类前务必先读完本节。**
+
+BepInEx 在「首个真实场景就绪**之前**」就加载插件（时序来自 `BepInEx_Manager` 的创建点）。
+此时创建的一切 GameObject —— **包括 BepInEx 自己的管理器对象** —— 都会在第一个真实场景
+加载时被 Unity 一并销毁，**即使调用过 `DontDestroyOnLoad`**。
+
+后果极具误导性：
+
+| 现象 | 原因 |
+|---|---|
+| BepInEx 日志显示插件加载成功、初始化日志齐全 | 它们都在 `Awake` 里执行，`Awake` 确实跑过了 |
+| `SceneManager.sceneLoaded` 照常触发 | 它是**静态**事件，委托已捕获实例；在被销毁的实例上调用只用静态 Unity API 的方法仍然可行 |
+| **`Update` 永不执行** → 热键无反应、兜底扫描停摆、防回写失效 | 承载 `Update` 的组件已被销毁 |
+| 日志里没有任何异常 | 销毁是 Unity 的正常行为，不产生错误 |
+
+**对策是三层：**
+
+1. **入口类不自持逐帧逻辑。** `LocalizationPlugin` 只做启动编排，绝不写 `Update`。
+2. **独立的延迟宿主 [`PluginHost`]。** 它由 `Ensure()` 创建，被销毁后能重建；
+   重建触发点三处互为备份：
+   - `Awake` 末尾试建一次（覆盖"场景已就绪才加载插件"的情形）；
+   - **每次 `sceneLoaded`（`force: true`，跳过防抖）** —— 主要的复活点；
+   - `PatchHelpers.TryLocalize` 的看门狗 —— 翻译命中的必经之路，也是最后一道机会。
+3. **状态一律放静态属性。** 宿主会被销毁重建，任何存在它字段里的东西都会丢；
+   词表 / 排除名单 / 局部化器全部挂在 `LocalizationPlugin` 的静态属性上。
+
+**两条别加回来的"优化"：**
+
+- **不要在 `OnDestroy` 里退订 `SceneManager.sceneLoaded`。** 入口对象会在首个真实场景
+  加载时被销毁，一退订，此后所有场景加载事件都收不到 —— 而那正是宿主最重要的重建点。
+  订阅的是静态方法，不依赖实例存活。
+- **不要在 `OnDestroy` 里 `UnpatchSelf`。** 一执行就等于在游戏刚起来时把整条翻译链路拆掉，
+  且日志上看不出任何异常。进程退出时 Unity 会连同补丁一起回收，无需手动卸载。
+
+**存活判定必须走 `UnityEngine.Object` 重载的 `==`。** 只用 `ReferenceEquals` 的话，
+「Unity 侧已销毁、而 `OnDestroy` 恰好没跑到」的实例会被永远判成"存在"，宿主再也建不起来 ——
+就是上表那个故障的变体。该运算符同时覆盖 null / 存活 / 已销毁，且只做一次原生指针比较。
 
 ## 4. 翻译流水线
 
