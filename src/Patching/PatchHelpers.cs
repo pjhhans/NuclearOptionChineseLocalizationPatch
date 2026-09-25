@@ -65,11 +65,27 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// 从组件推断作用域。用 GameObject 名是有意的：游戏给 HUD 上每个文本对象都起了
         /// 有语义的名字（<c>countermeasureName</c> / <c>weaponName</c> / <c>InfoText</c> …），
         /// 而词表正是按这些名字分组登记的。
+        ///
+        /// <para><b>必须剥掉 Unity 自动加的重名后缀。</b>同一预制体被实例化多次时，Unity 会把
+        /// 后续实例命名为 <c>average (1)</c> / <c>throttleLabel (2)</c>。这些名字永远命中不了
+        /// 按 <c>average</c> / <c>throttleLabel</c> 登记的作用域词条，于是静默退化到全局匹配 ——
+        /// 部分文本还能翻、部分翻不出，是最难排查的那种故障。</para>
         /// </summary>
         internal static string ScopeOf(Component comp)
         {
-            return comp == null ? "Unknown" : comp.gameObject.name;
+            if (comp == null) return "Unknown";
+            string name = comp.gameObject.name;
+            if (string.IsNullOrEmpty(name)) return "Unknown";
+
+            // 先做一次字符速判，绝大多数名字不以 ')' 结尾，省掉正则。
+            if (name[name.Length - 1] == ')') name = UnityDuplicateSuffix.Replace(name, string.Empty);
+            return name.Length == 0 ? "Unknown" : name;
         }
+
+        /// <summary>Unity 的重名后缀，形如 <c>" (3)"</c>。</summary>
+        private static readonly System.Text.RegularExpressions.Regex UnityDuplicateSuffix =
+            new System.Text.RegularExpressions.Regex(
+                @"\s*\(\d+\)$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
         /// <summary>
         /// 尝试翻译。返回 true 表示应当写回（结果与原文不同且确实含中文）。

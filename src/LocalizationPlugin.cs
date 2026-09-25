@@ -83,10 +83,18 @@ namespace NuclearOptionChineseLocalizationPatch
                 return;
             }
 
-            Table.Load(PluginPaths.BaseDir);
+            bool tableOk = Table.Load(PluginPaths.BaseDir);
             Exclusions.LoadFile(PluginPaths.ExclusionsFile);
             Localizer.ClearCache();
             RewriteGuard.Clear();
+
+            if (!tableOk)
+            {
+                Log.Error(initial
+                    ? "首次载入词表失败，本次启动将无译文可用。"
+                    : "热重载已中止：词表未替换，界面维持现状（旧词表仍在工作）。");
+                return;
+            }
 
             Log.Info(
                 $"词表已载入：普通 {Table.GlobalCount} / 模板 {Table.TemplateCount} / " +

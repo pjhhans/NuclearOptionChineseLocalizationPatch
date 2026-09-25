@@ -59,28 +59,43 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
         // ------------------------------------------------------------------ 载入
 
-        /// <summary>从数据目录载入全部词表资源。单个文件损坏不影响其余部分。</summary>
-        internal void Load(string dataDir)
+        /// <summary>
+        /// 从数据目录载入全部词表资源。单个文件损坏不影响其余部分。
+        ///
+        /// <para><b>主词表是先解析、后替换。</b>手改词表漏一个逗号时反序列化会抛异常；
+        /// 若此时已经清空，游戏立刻全屏英文，而日志里只有一条 Warn（正常运行没人看日志）。
+        /// 宁可保留上一份仍然可用的词表，把问题留在日志里。</para>
+        /// </summary>
+        /// <returns>主词表是否成功替换。false 表示本次载入已中止、现有词表原封未动。</returns>
+        internal bool Load(string dataDir)
         {
+            string mainPath = Path.Combine(dataDir, "translation.json");
+            Dictionary<string, string> main = JsonFile.ReadObject(mainPath);
+            if (main == null || main.Count == 0)
+            {
+                Diagnostics.Log.Error(
+                    "translation.json 解析失败或为空，未替换现有词表（现有普通 " + _global.Count + " 条）。" +
+                    "若是按 F11 热重载后出现，请检查该文件语法。");
+                return false;
+            }
+
             _global.Clear(); _templates.Clear(); _reverse.Clear();
             _prefixFragments.Clear(); _suffixFragments.Clear(); _infixFragments.Clear();
             _scoped.Clear(); _forceScoped.Clear();
             _minTemplateKeyLength = int.MaxValue;
 
-            LoadMainTable(Path.Combine(dataDir, "translation.json"));
+            IngestMain(main);
             LoadScopeFiles(Path.Combine(dataDir, "scopes"));
             LoadForceScopes(Path.Combine(dataDir, "force_scopes.json"));
 
             _prefixFragments.Sort((a, b) => b.Key.Length.CompareTo(a.Key.Length));
             _suffixFragments.Sort((a, b) => b.Key.Length.CompareTo(a.Key.Length));
             _infixFragments.Sort((a, b) => b.Key.Length - a.Key.Length);
+            return true;
         }
 
-        private void LoadMainTable(string path)
+        private void IngestMain(Dictionary<string, string> raw)
         {
-            Dictionary<string, string> raw = JsonFile.ReadObject(path);
-            if (raw == null) return;
-
             foreach (KeyValuePair<string, string> kv in raw)
             {
                 string key = kv.Key;
