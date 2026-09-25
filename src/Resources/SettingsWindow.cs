@@ -40,6 +40,35 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
         /// <summary>实时生效的扫描间隔（秒）。初值取自配置。</summary>
         internal static float ScanInterval = 1f;
 
+        // ------------------------------------------------------------------ 每帧快照
+
+        // IMGUI 一帧之内会为 Layout / Repaint / 各种输入事件多次调用 OnGUI。
+        // 诊断区是**变长**的（逐条 Label），只要两个 pass 之间条数不一样，Unity 就抛
+        // "GUILayout: Mismatched LayoutGroup"，窗口当场画坏 —— 而「窗口画坏」对正在
+        // 验证"到底生效了没有"的人来说是一次假阴性，代价比多几行代码高得多。
+        // 所以每帧第一次进入时取一份快照，之后整个帧只读这份快照，条数恒定。
+        private static long _snapshotFrame = -1;
+        private static long _hitTotal;
+        private static long _missTotal;
+        private static string[] _hitLines = new string[0];
+        private static string[] _missLines = new string[0];
+
+        private static void RefreshSnapshot()
+        {
+            // 注意：本 Unity 版本里 Time.frameCount 是 long，别写成 int。
+            long frame = Time.frameCount;
+            if (frame == _snapshotFrame) return;
+            _snapshotFrame = frame;
+
+            TextLocalizer localizer = LocalizationPlugin.Localizer;
+            _hitLines = localizer == null ? new string[0] : localizer.SnapshotRecentHits();
+            _hitTotal = localizer == null ? 0 : localizer.HitCount;
+
+            MissLog missLog = LocalizationPlugin.MissLog;
+            _missLines = missLog == null ? new string[0] : missLog.SnapshotRecent();
+            _missTotal = missLog == null ? 0 : missLog.FragmentCount;
+        }
+
         // ------------------------------------------------------------------ 字体
 
         private static Font _cjkFont;
@@ -86,6 +115,8 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
         private static void DrawContents(int windowId)
         {
+            RefreshSnapshot();
+
             GUILayout.BeginVertical();
             _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
 
@@ -230,29 +261,27 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
         private static void DrawDiagnostics()
         {
-            GUILayout.Label("── 最近命中（原文 → 译文）──");
-            TextLocalizer localizer = LocalizationPlugin.Localizer;
-            string[] hits = localizer == null ? new string[0] : localizer.SnapshotRecentHits();
-            if (hits.Length == 0)
+            // 只读 RefreshSnapshot() 取的快照，绝不再直接问 Localizer / MissLog ——
+            // 否则条数可能在两个 pass 之间变化，见快照区的说明。
+            GUILayout.Label($"── 最近命中（原文 → 译文）　累计 {_hitTotal} 条 ──");
+            if (_hitLines.Length == 0)
             {
                 GUILayout.Label("　（还没有任何一条文本被翻成中文 —— 若界面上确实有英文，问题在补丁没被执行）");
             }
             else
             {
-                for (int i = hits.Length - 1; i >= 0; i--) GUILayout.Label("　" + hits[i]);
+                for (int i = _hitLines.Length - 1; i >= 0; i--) GUILayout.Label("　" + _hitLines[i]);
             }
 
             GUILayout.Space(6);
-            GUILayout.Label("── 最近漏译（<作用域>片段）──");
-            MissLog missLog = LocalizationPlugin.MissLog;
-            string[] misses = missLog == null ? new string[0] : missLog.SnapshotRecent();
-            if (misses.Length == 0)
+            GUILayout.Label($"── 最近漏译（<作用域>片段）　累计 {_missTotal} 条 ──");
+            if (_missLines.Length == 0)
             {
                 GUILayout.Label("　（无）");
             }
             else
             {
-                for (int i = misses.Length - 1; i >= 0; i--) GUILayout.Label("　" + misses[i]);
+                for (int i = _missLines.Length - 1; i >= 0; i--) GUILayout.Label("　" + _missLines[i]);
             }
         }
     }
