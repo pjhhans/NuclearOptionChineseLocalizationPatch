@@ -109,6 +109,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             translated = result;
             Remember(result, original);
             RewriteGuard.Track(comp, original, result);
+            // 新内容真的翻出来了 —— 告诉兜底扫描「界面在变」，把空闲退避清零，
+            // 并让下一轮扫描尽快跟上（有些文本绕过 setter，只有扫描才够得着）。
+            Host.NotifyTranslationActivity();
             return true;
         }
 
@@ -116,41 +119,47 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// 原地翻译组件当前持有的文本。用于 <c>OnEnable</c> 这类"预制体自带英文默认值、
         /// 不经过任何 setter"的场景。
         /// </summary>
-        internal static void LocalizeInPlace(TMP_Text text)
+        /// <returns>是否真的改写了文本。兜底扫描靠它统计「本轮翻到东西没有」，
+        /// 作为空闲退避的信号 —— 什么都不改的扫描才允许拉长间隔。</returns>
+        internal static bool LocalizeInPlace(TMP_Text text)
         {
-            if (text == null || _tmpField == null) return;
+            if (text == null || _tmpField == null) return false;
             try
             {
                 string current = _tmpField(text);
-                if (string.IsNullOrEmpty(current)) return;
+                if (string.IsNullOrEmpty(current)) return false;
 
                 string translated;
-                if (!TryLocalize(current, text, out translated)) return;
+                if (!TryLocalize(current, text, out translated)) return false;
 
                 // 直接写字段，避开 setter —— 否则会触发我们自己的 set_text 钩子，
                 // 虽然幂等短路能兜住，但白白多走一遍完整流水线。
                 _tmpField(text) = translated;
+                return true;
             }
             catch (Exception ex)
             {
                 Diagnostics.Log.Debug("原地翻译失败：" + ex.Message);
+                return false;
             }
         }
 
-        internal static void LocalizeInPlace(Text text)
+        internal static bool LocalizeInPlace(Text text)
         {
-            if (text == null || _legacyField == null) return;
+            if (text == null || _legacyField == null) return false;
             try
             {
                 string current = _legacyField(text);
-                if (string.IsNullOrEmpty(current)) return;
+                if (string.IsNullOrEmpty(current)) return false;
                 string translated;
-                if (!TryLocalize(current, text, out translated)) return;
+                if (!TryLocalize(current, text, out translated)) return false;
                 _legacyField(text) = translated;
+                return true;
             }
             catch (Exception ex)
             {
                 Diagnostics.Log.Debug("原地翻译失败：" + ex.Message);
+                return false;
             }
         }
 

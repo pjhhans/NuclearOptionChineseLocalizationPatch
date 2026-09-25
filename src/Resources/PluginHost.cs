@@ -29,9 +29,41 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
         /// <summary>重建防抖间隔。看门狗挂在高频路径上，未命中时必须只花一次静态比较。</summary>
         private const float EnsureDebounceSeconds = 1f;
 
+        /// <summary>空闲退避的上限：间隔最多放大到基础的 2³ = 8 倍。</summary>
+        private const int MaxBackoffShift = 3;
+
+        /// <summary>鼠标按住期间轮询「松手了没」的间隔。</summary>
+        private const float DragRecheckSeconds = 0.25f;
+
         private float _nextScanTime;
 
+        /// <summary>连续「空手而归」的兜底扫描次数。用于空闲退避。</summary>
+        private int _idleScans;
+
+        /// <summary>上次读到的扫描间隔滑块值，用来检测用户手动改动（改动即复位退避）。</summary>
+        private float _lastSliderValue = -1f;
+
         internal static bool Alive => _instance != null;
+
+        /// <summary>场景加载 / 补丁路径翻到新东西时调用：退避立即复位，下次扫描按基础间隔来。</summary>
+        internal static void ResetScanBackoff()
+        {
+            if (_instance != null) _instance._idleScans = 0;
+        }
+
+        /// <summary>
+        /// 补丁路径真的翻译了什么（新内容出现了）时调用：退避复位，并让兜底扫描尽快跟上一遍
+        /// —— 那些绕过 setter、只有扫描才够得着的文本不用等完整退避周期。
+        /// </summary>
+        internal static void NotifyTranslationActivity()
+        {
+            if (_instance == null) return;
+            _instance._idleScans = 0;
+            float baseInterval = SettingsWindow.ScanInterval;
+            if (baseInterval <= 0f) baseInterval = 1f;
+            float soon = Time.realtimeSinceStartup + baseInterval;
+            if (soon < _instance._nextScanTime) _instance._nextScanTime = soon;
+        }
 
         /// <summary>高频路径入口，带防抖。宿主已活着时只做一次存活判定。</summary>
         internal static void Ensure() => Ensure(false);
@@ -116,11 +148,37 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
         private void HandleScan()
         {
-            float interval = SettingsWindow.ScanInterval;
-            if (interval <= 0f) interval = 1f;
+            float slider = SettingsWindow.ScanInterval;
+            if (slider <= 0f) slider = 1f;
+            if (_lastSliderValue != slider)
+            {
+                // 用户手动改了滑块：按他的意图来，退避立即清零。
+                _lastSliderValue = slider;
+                _idleScans = 0;
+            }
+
+            // ★ 拖动视角 / 拖拽 UI 时不扫描。兜底扫描用的是 FindObjectsOfTypeAll
+            //   （场景 + 所有已加载资产的全内存枚举），一次几毫秒到几十毫秒；
+            //   正在拖自由视角时，它表现为画面每隔一个扫描间隔跳一下。
+            //   按住期间只做这三次廉价的按键轮询，松开后很快自动补扫，
+            //   拖动期间新出现的文本也只延迟到松手那一刻。
+            if (Input.GetMouseButton(0) || Input.GetMouseButton(1) || Input.GetMouseButton(2))
+            {
+                if (Time.realtimeSinceStartup < _nextScanTime) return;
+                _nextScanTime = Time.realtimeSinceStartup + DragRecheckSeconds;
+                return;
+            }
+
+            // 空闲退避：连续空手扫描（什么都没翻到）就把间隔逐次翻倍，上限 ×8。
+            // 界面稳定时从「每秒一次全内存枚举」降到最多 8 秒一次；
+            // 任何真实翻译（补丁路径 NotifyTranslationActivity / 扫描本身翻到东西 /
+            // 场景加载）都会把退避清零，新文本 1 秒内变中文的语义不变。
+            float interval = slider * (1 << Math.Min(_idleScans, MaxBackoffShift));
             if (Time.realtimeSinceStartup < _nextScanTime) return;
             _nextScanTime = Time.realtimeSinceStartup + interval;
-            LocalizationPlugin.ScanScene();
+
+            int changes = LocalizationPlugin.ScanScene();
+            _idleScans = changes > 0 ? 0 : _idleScans + 1;
         }
 
         private void OnDestroy()

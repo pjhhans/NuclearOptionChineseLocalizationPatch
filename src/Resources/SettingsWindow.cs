@@ -239,6 +239,7 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
             GUILayout.Label($"兜底扫描间隔：{ScanInterval:F2} 秒　（决定新出现的文本多久变中文）");
             ScanInterval = GUILayout.HorizontalSlider(ScanInterval, 0.1f, 5f);
+            GUILayout.Label("界面稳定时扫描自动放慢（最长 8 倍间隔）；拖动视角时暂停，松开即恢复。");
 
             TextLocalizer localizer = LocalizationPlugin.Localizer;
             if (localizer != null)

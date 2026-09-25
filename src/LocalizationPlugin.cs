@@ -27,7 +27,7 @@ namespace NuclearOptionChineseLocalizationPatch
     {
         internal const string Guid = "com.nuclearoption.zhcn.localization";
         internal const string PluginName = "Nuclear Option Chinese Localization Patch";
-        internal const string PluginVersion = "1.5.0";
+        internal const string PluginVersion = "1.5.1";
 
         // ------------------------------------------------------------------
         // 数据一律挂在静态属性上。
@@ -182,9 +182,9 @@ namespace NuclearOptionChineseLocalizationPatch
         /// 以及绕过 setter 直接写字段的路径。它同时是 <see cref="PatchHelpers.LocalizeInPlace"/>
         /// 的驱动源，因此扫描间隔直接决定「新出现的文本多久变中文」。</para>
         /// </summary>
-        internal static void ScanScene()
+        internal static int ScanScene()
         {
-            if (Localizer == null || !Localizer.Enabled) return;
+            if (Localizer == null || !Localizer.Enabled) return 0;
 
             RuntimeStatus.Scans++;
 
@@ -192,18 +192,24 @@ namespace NuclearOptionChineseLocalizationPatch
             // 回退链会被重置。搭这次扫描的顺风车最省事。
             CjkFontProvider.Register();
 
+            // 返回值 = 本轮真正改写掉的组件数。兜底扫描的空闲退避以此为信号：
+            // 翻到东西说明界面在变，退避清零；空手而归则逐步拉长间隔。
+            int changes = 0;
             try
             {
                 var all = UnityEngine.Resources.FindObjectsOfTypeAll<TMP_Text>();
-                for (int i = 0; i < all.Length; i++) PatchHelpers.LocalizeInPlace(all[i]);
+                for (int i = 0; i < all.Length; i++)
+                    if (Patching.PatchHelpers.LocalizeInPlace(all[i])) changes++;
 
                 var legacy = UnityEngine.Resources.FindObjectsOfTypeAll<UnityEngine.UI.Text>();
-                for (int i = 0; i < legacy.Length; i++) PatchHelpers.LocalizeInPlace(legacy[i]);
+                for (int i = 0; i < legacy.Length; i++)
+                    if (Patching.PatchHelpers.LocalizeInPlace(legacy[i])) changes++;
             }
             catch (Exception ex)
             {
                 Log.Debug("兜底扫描失败：" + ex.Message);
             }
+            return changes;
         }
 
         private static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -213,6 +219,7 @@ namespace NuclearOptionChineseLocalizationPatch
             Log.Info($"场景已加载：{scene.name}。");
             // 强制重建：这是宿主最主要的复活点，不能被防抖挡掉。
             PluginHost.Ensure(force: true);
+            PluginHost.ResetScanBackoff();
             CjkFontProvider.Register();
             ScanScene();
         }
