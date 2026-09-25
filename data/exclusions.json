@@ -75,7 +75,10 @@
     "airbase 1",
     "Delta",
     "Ext.",
-    "Sync"
+    "Sync",
+    "Title",
+    "SAMTrailer1",
+    "According to all known laws of aviation and annoying people on the subreddit, there is no way that an MC-260 Chimera should be able to fly. Its little wings are far too small to get its fat little body off of the ground. The Chimera of course, flies anyway, because Aryx doesn't care what aerodynamics thinks."
   ],
   "terms": [
     "TrackIR",
@@ -110,5 +113,5 @@
   "restoreTerms": [],
   "longGuard": true,
   "longGuardRatio": 3.0,
-  "_readme": "不翻译名单 / 保持英文名单。改完按 F11 →「重新加载翻译文件」立即生效，不用重启游戏。 | useDefaults: 是否启用代码内置的默认排除（HUD 实时读数、内置术语等）。 | scopes: 追加「按对象名」排除（Unity GameObject 名，如 HeadingText）。 | texts: 追加「按文本」排除（如 SPD）；以某项 + 空格开头的读数（SPD 673）也会一并排除。 | terms: 追加「保持英文」的专有名词/技术缩写（如 RCS、NEZ）；以某项开头的读数形式（RCS: 5.2）与句中的该词也会保持英文。 | restoreScopes / restoreTerms: 「抢救」—— 从最终名单里撤掉这些，用来恢复某个内置默认项的翻译。 | longGuard: 译文显示宽度超过原文 longGuardRatio 倍时保持原文（默认 3.0），只对单词/双词的短标签生效，避免把固定宽度的槽位撑破。 | 运行期自动放弃的对象名会由插件自动追加到 scopes。 | ⚠ 隐私约定：本文件会随仓库公开分发，**不要**把玩家昵称、他人账号 ID、创意工坊作者名等个人信息写进 scopes / texts / terms。运行期采集到的此类字符串请在提交前剔除。"
+  "_readme": "不翻译名单 / 保持英文名单。改完按 F11 →「重新加载翻译文件」立即生效，不用重启游戏。 | useDefaults: 是否启用代码内置的默认排除（HUD 实时读数、内置术语等）。 | scopes: 追加「按对象名」排除（Unity GameObject 名，如 HeadingText）。 | texts: 追加「按文本」排除（如 SPD）；以某项 + 空格开头的**读数**（SPD 673）也会一并排除 —— 注意仅当空格之后确实是读数（数字 + 至多 4 字符短单位），`A 155mm slug …` 这种后面跟词句的整句不会被吞掉。 | terms: 追加「保持英文」的专有名词/技术缩写（如 RCS、NEZ）；以某项开头的读数形式（RCS: 5.2）与句中的该词也会保持英文。 | restoreScopes / restoreTerms: 「抢救」—— 从最终名单里撤掉这些，用来恢复某个内置默认项的翻译。 | longGuard: 译文显示宽度超过原文 longGuardRatio 倍时保持原文（默认 3.0），只对单词/双词的短标签生效，避免把固定宽度的槽位撑破。 | 运行期自动放弃的对象名会由插件自动追加到 scopes。 | ⚠ 隐私约定：本文件会随仓库公开分发，**不要**把玩家昵称、他人账号 ID、创意工坊作者名等个人信息写进 scopes / texts / terms。运行期采集到的此类字符串请在提交前剔除。"
 }

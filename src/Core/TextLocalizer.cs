@@ -425,6 +425,14 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 // 术语片段保持英文，且**不记入漏译** —— 它不是漏译，是刻意保留。
                 if (_exclusions.IsKeptTerm(piece)) continue;
 
+                // ★ 名单里的片段同样跳过、且**不记入漏译**。
+                //   排除判定此前只在 LocalizeInner 入口对**整条**文本做过一次；切片之后
+                //   每个 piece 都是全新的字符串，不再判一次的话，"StartObjective"、
+                //   "placeholder"、"{MissionManager.CurrentMission.Name}" 这类已经在名单里的
+                //   片段就会被当成新漏译反复记录 —— 表现为「名单里明明登记了，
+                //   漏译清单里却永远清不掉」，白占清单位置、掩盖真正的缺口。
+                if (_exclusions.IsExcluded(piece, scope)) continue;
+
                 if (!string.IsNullOrEmpty(scope))
                 {
                     string scopedHit = _table.LookupScoped(scope, piece);
@@ -495,8 +503,12 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 {
                     // 单位名本身还没词条：把**它**记进漏译清单（而不是整条金额串），
                     // 这样清单里是可直接补的短标签，不是一串带着动态读数的碎片。
-                    MissCount++;
-                    _missLog.Record(unit, scope);
+                    // 名单里的单位名同样不记（理由见 SliceAndRebuild 的说明）。
+                    if (!_exclusions.IsExcluded(unit, scope))
+                    {
+                        MissCount++;
+                        _missLog.Record(unit, scope);
+                    }
                     return text;
                 }
                 // 与词表既有口径一致：`由弹药库 $45.3k`（先归因方、后金额）。
@@ -586,6 +598,10 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         private string ReplacePrefix(string text, string prefix, string scope)
         {
             if (prefix.Length == 0) return text;
+            // 名单里的前缀不翻译、也不记漏译。理由与 SliceAndRebuild 里的同名判定一致：
+            // 排除判定只作用于整条文本，尾缀模式剥出来的前缀是**新字符串**，
+            // 不在这里补判的话，名单条目会被当成漏译反复记下来。
+            if (_exclusions.IsExcluded(prefix, scope)) return text;
             string scoped = string.IsNullOrEmpty(scope) ? null : _table.LookupScoped(scope, prefix);
             string trans = scoped ?? _table.LookupGlobal(prefix);
             if (trans != null) return text.Replace(prefix, trans);

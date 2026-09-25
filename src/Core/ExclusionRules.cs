@@ -124,18 +124,37 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
             // 「某项 + 空格开头」的读数一并排除：登记了 SPD 673，
             // 那么 SPD 673 km/h 也应当跟着排除，否则同一读数会一半中文一半英文。
+            //
+            // ★ 必须确认空格之后确实是**读数**，不能只要求「前缀 + 一个空格」。
+            //   旧判据漏掉了后半句，于是名单里的**单字母条目**（`A` / `AA` / `HI` / `LO`
+            //   —— 都是任务编辑器里的默认名，本身还带零宽空格）把一切以「A 」开头的
+            //   **整句**都判进了不翻译名单。受害实例（词表里明明有译文）：
+            //     A Piledriver may cross the Karman line at the top of its ballistic flight.
+            //     A Shard Class Corvette can supply munitions to aircraft landing on its deck.
+            //     A 155mm slug fired from the Dynamo Class' railgun …
+            //   它们的表现是最难查的一类：**既不出中文，也不进漏译清单**——
+            //   因为走的是"刻意排除"，日志与清单里都看不出任何异常。
+            //   现在只认「数字（可带符号）+ 最多 4 字符的短单位」，`A 155mm slug …`
+            //   这种后面跟词句的整句会正常进入翻译流程。
             foreach (string candidate in _texts)
             {
-                if (trimmed.Length > candidate.Length &&
-                    trimmed[candidate.Length] == ' ' &&
-                    string.Compare(trimmed, 0, candidate, 0, candidate.Length,
-                                   StringComparison.OrdinalIgnoreCase) == 0)
-                {
-                    return true;
-                }
+                if (trimmed.Length <= candidate.Length + 1) continue;
+                if (trimmed[candidate.Length] != ' ') continue;
+                if (string.Compare(trimmed, 0, candidate, 0, candidate.Length,
+                                   StringComparison.OrdinalIgnoreCase) != 0) continue;
+
+                string rest = trimmed.Substring(candidate.Length + 1).TrimStart();
+                if (rest.Length > 0 && ReadoutTail.IsMatch(rest)) return true;
             }
             return false;
         }
+
+        /// <summary>
+        /// 「某项 + 空格开头的读数」里那个'读数'的形状：<c>3</c> / <c>673 km/h</c> / <c>+1.9</c>。
+        /// 单位最长 4 个字符 —— 再长就说明后面跟的是词句，不该整条排除。
+        /// </summary>
+        private static readonly Regex ReadoutTail =
+            new Regex(@"^[+\-±]?\s*[\d.,]+\s*[a-zA-Z/°%]{0,4}$", RegexOptions.Compiled);
 
         /// <summary>
         /// 是否属于「保持英文」的术语。判据是**收窄**的，只有三种形态才算：

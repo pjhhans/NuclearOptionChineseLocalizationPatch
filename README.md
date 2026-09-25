@@ -3,7 +3,7 @@
 Nuclear Option 的非官方简体中文本地化插件。基于 BepInEx 5，在**运行期**把界面文本替换为
 中文，不修改任何游戏文件，删除插件目录即完全还原。
 
-词表 **4426 条**（普通 4254 ／ 整段模板 127 ／ 拼接片段 45），覆盖座舱 HUD、任务编辑器、
+词表 **4779 条**（普通 4595 ／ 整段模板 127 ／ 拼接片段 57），覆盖座舱 HUD、任务编辑器、
 设置菜单、教程弹窗、机场与航路点名称、载具与武器描述、击杀战报与聊天信息等。
 
 > **非官方**。本插件由玩家社区维护，与 Nuclear Option 的开发者无关；
@@ -56,8 +56,8 @@ Nuclear Option 的非官方简体中文本地化插件。基于 BepInEx 5，在*
 3. 启动游戏。启动后 `BepInEx/LogOutput.log` 里应出现：
 
    ```
-   Nuclear Option Chinese Localization Patch v1.4.0 已启动。
-   词表已载入：普通 4519 / 模板 127 / 片段 57 / 作用域 …
+   Nuclear Option Chinese Localization Patch v1.5.0 已启动。
+   词表已载入：普通 4595 / 模板 127 / 片段 57 / 作用域 …
    [自检] Harmony 生效 = True
    ```
 
