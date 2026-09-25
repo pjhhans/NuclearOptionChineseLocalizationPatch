@@ -1,3 +1,4 @@
+using System.Text;
 using HarmonyLib;
 using TMPro;
 
@@ -42,6 +43,43 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         {
             string translated;
             if (PatchHelpers.TryLocalize(sourceText, __instance, out translated)) sourceText = translated;
+        }
+
+        /// <summary>
+        /// <c>SetText(StringBuilder)</c> —— <b>一条完全独立的通路，必须单独打点。</b>
+        ///
+        /// <para>它既不经过 <c>text</c> setter，也不经过 <c>SetText(string, bool)</c>：
+        /// 实现只是 <c>PopulateTextBackingArray(sourceText, 0, sourceText.Length)</c>
+        /// 然后 <c>m_inputSource = TextInputSources.SetText</c>，<b>全程不写 <c>m_text</c></b>。
+        /// 所以 <see cref="ParseInputTextPrefix"/> 那个兜底也接不住它（它只处理 <c>m_text</c>）——
+        /// 文本会彻底绕开整条流水线：既不命中、也不进漏译清单，日志干干净净。</para>
+        ///
+        /// <para><b>左上角战报（击杀信息）正是走这条。</b>
+        /// <c>MessageManager.UserCode_RpcKillMessage</c> 把
+        /// <c>&lt;color=#…&gt;杀伤者&lt;/color&gt; shot down &lt;color=#…&gt;受害者&lt;/color&gt;</c>
+        /// 交给 <c>GameplayUI.KillFeed</c> → <c>MessageUI.KillFeed</c>（按 <c>\n</c> 拆行后
+        /// <c>MessageFeed.Enqueue</c>）→ <c>MessageFeed.RefreshUI</c> 把队列拼进一个 StringBuilder
+        /// 再 <c>_display.SetText(_sb)</c>。</para>
+        ///
+        /// <para>实测边界：整个 Assembly-CSharp 只引用了 <b>两个</b> <c>TMP_Text.SetText</c> 重载
+        /// （<c>(string, bool)</c> 与 <c>(StringBuilder)</c>），所以补上本方法即已覆盖游戏的全部
+        /// <c>SetText</c> 用法，不是打地鼠。</para>
+        ///
+        /// <para><b>用换引用而不是就地改写。</b>这个 builder 属于调用方（<c>MessageFeed._sb</c> 会被复用），
+        /// 就地 <c>Clear/Append</c> 会把中文留在调用方的对象里。换成新实例后调用方自己的 builder 不受影响，
+        /// 而 TMP 拿到的是译文。1 参重载是「先取 <c>sourceText.Length</c>、再委托给 3 参重载」，
+        /// 换引用后长度自然按译文算，不会截断。</para>
+        /// </summary>
+        [HarmonyPatch(typeof(TMP_Text), "SetText", new[] { typeof(StringBuilder) })]
+        [HarmonyPrefix]
+        internal static void SetTextStringBuilderPrefix(TMP_Text __instance, ref StringBuilder sourceText)
+        {
+            // 1 参重载自己会算 length 并转调 3 参重载，所以这里只需要把 builder 换成译文版。
+            if (sourceText == null || sourceText.Length == 0) return;
+
+            string translated;
+            if (!PatchHelpers.TryLocalize(sourceText.ToString(), __instance, out translated)) return;
+            sourceText = new StringBuilder(translated);
         }
 
         [HarmonyPatch(typeof(TMP_Text), "ParseInputText")]
