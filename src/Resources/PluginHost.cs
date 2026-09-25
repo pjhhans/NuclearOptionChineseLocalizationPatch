@@ -148,6 +148,12 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
         private void HandleScan()
         {
+            // 兜底扫描默认关闭：周期性的 FindObjectsOfTypeAll 是全内存枚举，
+            // 不是每个玩家都愿意为「补丁覆盖不到的少数文本」常年在后台付这笔钱。
+            // 场景加载时 OnSceneLoaded 仍会扫一次，保证每关开始时界面是完整的；
+            // 需要运行期持续补翻时，在 F11 窗口里打开下面的开关即可。
+            if (!SettingsWindow.ScanEnabled) return;
+
             float slider = SettingsWindow.ScanInterval;
             if (slider <= 0f) slider = 1f;
             if (_lastSliderValue != slider)

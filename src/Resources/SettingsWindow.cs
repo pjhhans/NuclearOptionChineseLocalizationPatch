@@ -40,6 +40,9 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
         /// <summary>实时生效的扫描间隔（秒）。初值取自配置。</summary>
         internal static float ScanInterval = 1f;
 
+        /// <summary>兜底扫描总开关。默认关闭（配置 ScanIntervalSeconds = 0），窗口里可实时开合。</summary>
+        internal static bool ScanEnabled;
+
         // ------------------------------------------------------------------ 每帧快照
 
         // IMGUI 一帧之内会为 Layout / Repaint / 各种输入事件多次调用 OnGUI。
@@ -237,9 +240,13 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
         {
             GUILayout.Label("── 调节 ──");
 
-            GUILayout.Label($"兜底扫描间隔：{ScanInterval:F2} 秒　（决定新出现的文本多久变中文）");
-            ScanInterval = GUILayout.HorizontalSlider(ScanInterval, 0.1f, 5f);
-            GUILayout.Label("界面稳定时扫描自动放慢（最长 8 倍间隔）；拖动视角时暂停，松开即恢复。");
+            ScanEnabled = GUILayout.Toggle(ScanEnabled, " 兜底扫描（默认关；某些文本一直英文时打开）");
+            if (ScanEnabled)
+            {
+                GUILayout.Label($"兜底扫描间隔：{ScanInterval:F2} 秒　（决定新出现的文本多久变中文）");
+                ScanInterval = GUILayout.HorizontalSlider(ScanInterval, 0.1f, 5f);
+                GUILayout.Label("界面稳定时扫描自动放慢（最长 8 倍间隔）；拖动视角时暂停，松开即恢复。");
+            }
 
             TextLocalizer localizer = LocalizationPlugin.Localizer;
             if (localizer != null)

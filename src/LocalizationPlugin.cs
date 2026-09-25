@@ -27,7 +27,7 @@ namespace NuclearOptionChineseLocalizationPatch
     {
         internal const string Guid = "com.nuclearoption.zhcn.localization";
         internal const string PluginName = "Nuclear Option Chinese Localization Patch";
-        internal const string PluginVersion = "1.5.1";
+        internal const string PluginVersion = "1.5.2";
 
         // ------------------------------------------------------------------
         // 数据一律挂在静态属性上。
@@ -66,7 +66,12 @@ namespace NuclearOptionChineseLocalizationPatch
             Localizer.SetCacheLimit(Settings.TranslationCacheLimit.Value);
 
             RuntimeStatus.DataDir = PluginPaths.BaseDir;
-            SettingsWindow.ScanInterval = ClampInterval(Settings.ScanIntervalSeconds.Value);
+            // 兜底扫描默认关闭（0）：补丁路径已覆盖绝大多数文本，周期性全内存枚举
+            // 只为补「绕过 setter 直接写字段」的少数通路，不值得每个玩家常年在后台付这笔钱。
+            // 需要时在 F11 窗口里打开即可，立即生效。
+            SettingsWindow.ScanEnabled = Settings.ScanIntervalSeconds.Value > 0f;
+            float configured = Settings.ScanIntervalSeconds.Value;
+            SettingsWindow.ScanInterval = ClampInterval(configured > 0f ? configured : 1f);
 
             ReloadData(initial: true);
             CjkFontProvider.Load();

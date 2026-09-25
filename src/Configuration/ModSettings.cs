@@ -39,8 +39,10 @@ namespace NuclearOptionChineseLocalizationPatch.Configuration
                 "把未翻译的文本累积到 missing.json / untranslated.json，供补词表用。");
 
             ScanIntervalSeconds = config.Bind(
-                "Performance", "ScanIntervalSeconds", 1f,
-                "兜底扫描间隔（秒），范围 0.1~5。它决定「新出现的文本多久变中文」。");
+                "Performance", "ScanIntervalSeconds", 0f,
+                "兜底扫描间隔（秒）。0 = 关闭（默认，省性能；大多数文本由补丁路径覆盖）。"
+                + "0.1~5 = 周期性扫描场景补翻漏网文本；界面稳定时还会自动放慢。"
+                + "若发现某些文本开机后一直是英文，可在 F11 窗口里临时打开扫描。");
 
             TranslationCacheLimit = config.Bind(
                 "Performance", "TranslationCacheLimit", 20000,
