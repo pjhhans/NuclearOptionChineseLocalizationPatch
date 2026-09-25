@@ -56,8 +56,8 @@ Nuclear Option 的非官方简体中文本地化插件。基于 BepInEx 5，在*
 3. 启动游戏。启动后 `BepInEx/LogOutput.log` 里应出现：
 
    ```
-   Nuclear Option Chinese Localization Patch v1.2.0 已启动。
-   词表已载入：普通 4254 / 模板 127 / 片段 45 / 作用域 …
+   Nuclear Option Chinese Localization Patch v1.4.0 已启动。
+   词表已载入：普通 4519 / 模板 127 / 片段 57 / 作用域 …
    [自检] Harmony 生效 = True
    ```
 

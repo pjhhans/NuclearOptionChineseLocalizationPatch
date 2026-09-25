@@ -24,9 +24,12 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         ///   <c>T/A-30</c> —— 机型代号里的斜杠不能当分隔符（否则会被切成 T 和 A-30）
         ///   <c>&lt;[^&gt;]+&gt;.*?&lt;/[^&gt;]+&gt;</c> —— 成对标签整体作为一个"不可切"单元
         ///   <c>--</c> 与 <c>\s+-\s+</c> —— 破折号
+        ///   <c>\t</c> —— 制表符。游戏里它是 UI 列表的**列分隔符**（例如任务编辑器的
+        ///               编队标签 <c>BDF Combined Arms Company\t$250m</c>：名称 + 费用）。
+        ///               不切开的话整条永远查不中词表，而名称本身是有词条的。
         /// </summary>
         internal static readonly Regex Delimiter = new Regex(
-            @"(T/A-30|<[^>]+>.*?</[^>]+>|<[^>]+>|--|\s+-\s+|[:/\[\]()|\n\v])",
+            @"(T/A-30|<[^>]+>.*?</[^>]+>|<[^>]+>|--|\s+-\s+|[:/\[\]()|\n\v\t])",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // ---------------------------------------------------------------- 噪声
@@ -45,9 +48,10 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         internal static readonly Regex NoiseCoordinate = new Regex(
             @"^[A-Z][a-z](\d{1,4})?$", RegexOptions.Compiled);
 
-        /// <summary>纯符号行（含短横、斜杠、括号）。</summary>
+        /// <summary>纯符号行（含短横、斜杠、括号）。逗号也在内 —— 带千位分隔的坐标三元组
+        /// （<c>37845.3, 283.1, 44958.8</c>）是调试读数，不该进漏译清单。</summary>
         internal static readonly Regex NoisePureSymbols = new Regex(
-            @"^[+\-0-9\s./()\[\]%#@&*|<>—]+$", RegexOptions.Compiled);
+            @"^[+\-0-9\s.,/()\[\]%#@&*|<>—]+$", RegexOptions.Compiled);
 
         /// <summary>爆炸当量：<c>150K TNT</c>。</summary>
         internal static readonly Regex NoiseExplosive = new Regex(
@@ -98,6 +102,25 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// <summary><c>Rearmed +100%</c>。</summary>
         internal static readonly Regex PlusNumberSuffix = new Regex(
             @"^(.+?)\s*\+\s*(\d+(?:\.\d{1,5})?)$", RegexOptions.Compiled);
+
+        /// <summary>
+        /// 补给战报的费用归因尾缀：<c>$45.3k by Munitions Bunker</c>。
+        ///
+        /// <para><b>为什么必须有这一条。</b>游戏里补给战报的真实拼法是
+        /// <c>"Rearmed " + " {0:F0}% complete" + " - cost: " + 金额 + " by " + 补给单位名</c>
+        /// （<c>Unit::UserCode_RpcRearm</c> 的 IL 逐字如此），所以 <c> - cost: </c> 之后剩下的
+        /// 那一截<b>恰好是「金额 + by + 单位名」</b>——金额是动态读数、整串永远匹配不上词表，
+        /// 只有把 <c>by</c> 后面的单位名单独翻出来才可能出中文。</para>
+        ///
+        /// <para><b>为什么不用中段片段 <c>== by </c>。</b>英文里 " by " 到处都是（散文、装备描述、
+        /// <c>picked up by ships</c>…）。做成通用中段会<b>劫持任意含 " by " 的句子</b>，
+        /// 产出「半中半英」的畸形结果；更糟的是结果含中文会命中幂等短路，
+        /// 于是<b>永久固化、永不重试，还不会进漏译清单</b>。
+        /// 这里用<b>金额锚定</b>把它收窄到唯一一种真实形状：<c>$</c> 开头的读数 + <c>by</c> + 名称。</para>
+        /// </summary>
+        internal static readonly Regex CostByUnitSuffix = new Regex(
+            @"^(\$[\d.,]+\s*[a-zA-Z]?)\s+by\s+([A-Za-z][A-Za-z0-9\s\-'.]*)$",
+            RegexOptions.Compiled);
 
         // ---------------------------------------------------------------- 句式
         /// <summary><c>Booting ...</c> —— 启动提示。</summary>

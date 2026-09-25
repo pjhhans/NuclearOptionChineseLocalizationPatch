@@ -1,7 +1,19 @@
 {
   "useDefaults": true,
   "scopes": [
-    "PlayerName"
+    "PlayerName",
+    "PlayerFunds",
+    "ControllerNameLabel",
+    "cpuFrame",
+    "gpuFrame",
+    "mainThread",
+    "mainThreadWait",
+    "ms",
+    "fps",
+    "receiveBytes",
+    "receiveCount",
+    "sendCount",
+    "RenderThread"
   ],
   "texts": [
     "lol",
@@ -39,7 +51,31 @@
     "What the fuck did you just fucking say about me, you little bitch? I'll have you know I graduated top of my class in the Navy Seals, and I've been involved in numerous secret raids on Al-Quaeda, and I have over 300 confirmed kills. I am trained in gorilla warfare and I'm the top sniper in the entire US armed forces. You ​",
     "\\ue5ca",
     "\\ue5cd",
-    "\\ue145"
+    "\\ue145",
+    "New Text",
+    "Content Text",
+    "Some Title",
+    "data placeholder",
+    "Debug Here",
+    "at loadMessage line",
+    "fdgsadhrsfsfdgfdsgfd",
+    "Test Error Message, Test Error Message, Test ErrorTest Error Message",
+    "- Objective had some error",
+    "- Objective had some errorObjective had some errorObjective had some errorObjective had some errorObjective had some errorObjective had some errorObjective had some errorObjective had some errorObjective had some error",
+    "'key' was not found in dictionary",
+    "IndexNotFoundException",
+    "Lorem ipsum dolor sit amet consectetur adipisicing elit. Nesciunt, architecto dicta eos, incidunt rem consectetur dolorem doloremque asperiores quasi eligendi beatae. Dolore, dignissimos voluptatum. Praesentium consequuntur accusamus vel doloribus error.",
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam,",
+    "\\ue5c5",
+    "\\ue5df",
+    "\\ue002",
+    "{Airframe} ?",
+    "{CURRENT FUNDS} \\n-{VALUE} \\n\\n{REMAINING FUNDS}",
+    "{MissionManager.CurrentMission.Name}",
+    "airbase 1",
+    "Delta",
+    "Ext.",
+    "Sync"
   ],
   "terms": [
     "TrackIR",
@@ -67,7 +103,8 @@
     "Devotion-class",
     "Manticore",
     "Ironside",
-    "Styx"
+    "Styx",
+    "rad"
   ],
   "restoreScopes": [],
   "restoreTerms": [],

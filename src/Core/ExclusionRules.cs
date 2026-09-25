@@ -73,7 +73,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 var dto = Newtonsoft.Json.JsonConvert.DeserializeObject<ExclusionDto>(json);
                 if (dto == null) return;
                 AddAll(_scopes, dto.scopes);
-                AddAll(_texts, dto.texts);
+                AddAll(_texts, dto.texts, scrub: true);
                 AddAll(_terms, dto.terms);
             }
             catch (Exception ex)
@@ -82,12 +82,20 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             }
         }
 
-        private static void AddAll(HashSet<string> set, List<string> items)
+        /// <summary>
+        /// 加入集合。<paramref name="scrub"/> 为 true 时先过一遍
+        /// <see cref="KeyScrubber"/> —— texts 名单必须洗掉零宽空格 / BOM / LRM / RLM，
+        /// 否则名单里的 <c>008FFF\u200B</c> 与运行时来的 <c>008FFF</c> 是两个不同的字符串，
+        /// 表现为「名单里明明登记了，却因为一个看不见的字符而匹配不上」。
+        /// </summary>
+        private static void AddAll(HashSet<string> set, List<string> items, bool scrub = false)
         {
             if (items == null) return;
             foreach (string s in items)
             {
-                if (!string.IsNullOrEmpty(s)) set.Add(s);
+                if (string.IsNullOrEmpty(s)) continue;
+                string item = scrub ? KeyScrubber.Scrub(s) : s;
+                if (item.Length > 0) set.Add(item);
             }
         }
 
@@ -107,6 +115,9 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
             if (_texts.Count == 0) return false;
 
+            // 与名单同一套清洗（见 AddAll 的说明）：游戏会给输入框里的名字追加
+            // \u200B（`airbase 1\u200B`、`玩家名\u200B`），不洗掉的话名单永远匹配不上。
+            text = KeyScrubber.Scrub(text);
             string trimmed = text.Trim();
             if (_texts.Contains(text)) return true;
             if (trimmed != text && _texts.Contains(trimmed)) return true;
@@ -156,7 +167,16 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (head.Length > 0 && _terms.Contains(head)) return true;
             }
 
-            // 形态 3：术语 + 分隔符 + 读数（含数字 / 纯符号）
+            // 形态 3：术语 + 分隔符 + 读数
+            //
+            // ★ 判据必须收窄。旧写法是「rest 里**任意位置**出现数字就算读数」，
+            //   于是术语后面跟一整句话时也会被整条判成"保持英文"。真实受害例子
+            //   （都已写进 check_report_pipeline.py 的用例）：
+            //     `VT-7 Vagrant +1.9`  —— 术语 VT-7 + 空格 + 后面带数字的一段话（击杀得分行）
+            //     `… Airport / Ab12`   —— 术语 VT-7 + 空格 + 后面的格子坐标（部署播报）
+            //   两条都是**整条不翻译**：结果里没有中文，也不进漏译清单，从界面到日志都看不出异常。
+            //   现在只认真正的读数形状：纯数字/纯符号，或「数字 + 紧跟其后的短单位」
+            //   （5.2、+1.9、40 km、12kJ）。
             foreach (string term in _terms)
             {
                 int len = term.Length;
@@ -176,10 +196,19 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     if (c >= '0' && c <= '9') hasDigit = true;
                     else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) hasLetter = true;
                 }
-                if (hasDigit || !hasLetter) return true;   // 含数字 或 纯符号
+                if (!hasLetter) return true;                             // 纯数字 / 纯符号
+                if (hasDigit && TermReadout.IsMatch(rest)) return true;   // 数字 + 短单位
+                // 其余是「术语后面跟词句」，属正文，继续走后续翻译流程
             }
             return false;
         }
+
+        /// <summary>
+        /// 术语后面那种"读数"的形状：<c>5.2</c> / <c>+1.9</c> / <c>40 km</c> / <c>12kJ</c>。
+        /// 单位最长 4 个字符 —— 再长就说明后面跟的是词而不是单位。
+        /// </summary>
+        private static readonly Regex TermReadout =
+            new Regex(@"^[+\-±]?\s*[\d.,]+\s*[a-zA-Z/°%]{0,4}$", RegexOptions.Compiled);
 
         /// <summary>剥掉形如 <c>[Scope]</c> 的前缀。作用域名长度设为 1–40，避免把正文里的方括号误当作用域。</summary>
         internal static string StripScopePrefix(string text)

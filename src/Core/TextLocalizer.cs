@@ -392,7 +392,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (string.IsNullOrEmpty(part)) continue;
 
                 // 单字符分隔符本身
-                if (part.Length == 1 && ":/[]()|\n\v".IndexOf(part[0]) >= 0) continue;
+                if (part.Length == 1 && ":/[]()|\n\v\t".IndexOf(part[0]) >= 0) continue;
 
                 // ---- 富文本标签块
                 if (part[0] == '<' && part[part.Length - 1] == '>')
@@ -445,11 +445,17 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     continue;
                 }
 
+                // ★ 交给尾缀模式的必须是 **Trim 过** 的 piece，不能是 part。
+                //   尾缀模式（VersionSuffix / ValueUnitSuffix / WordPlusNumber / ScoreSuffix…）
+                //   全部以 ^…$ 锚定，而 part 可能带首尾空白（HUD 读数的 prefab 常写成
+                //   "Score 0.0  "），这样会**全部失配**、随后落到下面的漏译分支，
+                //   读数就永远翻不出来，还白记一条 missing。
+                //   替换仍走 part.Replace，把原有的首尾空白保留下来（拼接串对空格敏感）。
                 bool handled;
-                string patterned = ApplyTailPatterns(part, out handled, scope);
-                if (patterned != part)
+                string patterned = ApplyTailPatterns(piece, out handled, scope);
+                if (patterned != piece)
                 {
-                    parts[i] = patterned;
+                    parts[i] = part.Replace(piece, patterned);
                     changed = true;
                 }
                 else if (!handled && !IsNoise(piece))
@@ -473,6 +479,29 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         private string ApplyTailPatterns(string text, out bool handled, string scope)
         {
             handled = false;
+
+            // 补给战报的费用归因尾缀（"Rearmed … - cost: $45.3k by Munitions Bunker" 里
+            // " - cost: " 之后剩下的那一截）。必须放在最前面：它是**唯一**一条允许碰 " by " 的规则，
+            // 而且靠金额锚定，绝不会误伤散文里的 " by "。
+            Match ebu = TokenPatterns.CostByUnitSuffix.Match(text);
+            if (ebu.Success)
+            {
+                handled = true;
+                string amount = ebu.Groups[1].Value.Trim();
+                string unit = ebu.Groups[2].Value.Trim();
+                string unitTrans = string.IsNullOrEmpty(scope) ? null : _table.LookupScoped(scope, unit);
+                unitTrans = unitTrans ?? _table.LookupGlobal(unit);
+                if (unitTrans == null || unitTrans == unit)
+                {
+                    // 单位名本身还没词条：把**它**记进漏译清单（而不是整条金额串），
+                    // 这样清单里是可直接补的短标签，不是一串带着动态读数的碎片。
+                    MissCount++;
+                    _missLog.Record(unit, scope);
+                    return text;
+                }
+                // 与词表既有口径一致：`由弹药库 $45.3k`（先归因方、后金额）。
+                return "由" + unitTrans + " " + amount;
+            }
 
             if (text.IndexOf("version", StringComparison.OrdinalIgnoreCase) >= 0)
             {
