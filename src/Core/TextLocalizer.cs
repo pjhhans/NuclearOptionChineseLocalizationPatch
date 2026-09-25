@@ -233,13 +233,15 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             if (!string.IsNullOrEmpty(scope))
             {
                 string scopedHit = _table.LookupScoped(scope, key);
-                if (scopedHit != null && stripped.Length > 0) return text.Replace(stripped, scopedHit);
+                if (scopedHit != null && CanReplace(text, stripped))
+                    return text.Replace(stripped, scopedHit);
             }
 
             if (!isForceScoped)
             {
                 string whole = _table.LookupGlobal(key);
-                if (whole != null && stripped.Length > 0) return text.Replace(stripped, whole);
+                if (whole != null && CanReplace(text, stripped))
+                    return text.Replace(stripped, whole);
             }
 
             // ---------------------------------------------------------- B 句式
@@ -259,6 +261,34 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
             // ---------------------------------------------------------- C 切片
             return SliceAndRebuild(text, scope, isForceScoped);
+        }
+
+        /// <summary>
+        /// A 阶段能否真的落地这次替换。
+        ///
+        /// <para><b>为什么需要这个判定。</b>A 阶段拿的是<b>剥掉标签后</b>的 <c>stripped</c>，
+        /// 但执行的是 <c>text.Replace(stripped, 译文)</c>。<b>标签夹在中间时，
+        /// <c>stripped</c> 并不是 <c>text</c> 的连续子串</b>，Replace 会静默地什么都不做 ——
+        /// 而方法却<b>照旧 return</b>，于是这一行被判成「已处理」，
+        /// 后面的 B2 片段拼接与 C 切片统统走不到。</para>
+        ///
+        /// <para>表现就是最难查的那一类故障：<b>词条明明有，整行却一个中文都不出</b>，
+        /// 而且不报错、不进漏译清单。典型形状是「彩色词 + 固定短语 + 彩色词」
+        /// （<c>&lt;color=…&gt;甲&lt;/color&gt; has been captured by &lt;color=…&gt;乙&lt;/color&gt;</c>）——
+        /// 击杀 feed / 聊天 feed 恰好全是这种形状。</para>
+        ///
+        /// <para><b>为什么不是简单地「结果没变就往下走」。</b>词表里有一批
+        /// <b>identity 键</b>（<c>原文 -&gt; 同一原文</c>，如 <c>[TargetCode]BLD</c>），
+        /// 它们的作用正是「查到但译文相同 ⇒ 不算漏译」，用来压掉漏译清单的噪声。
+        /// 若按「结果没变就继续」处理，这些键就失效、噪声会重新涌回来。
+        /// 所以判据是<b>「stripped 到底是不是 text 的子串」</b>：
+        /// 是（无标签，或标签在两端）→ 照旧返回，行为与以前逐字一致；
+        /// 不是（标签夹在中间）→ 那次 Replace 必然是空操作，放行到后续阶段才是正确的。</para>
+        /// </summary>
+        private static bool CanReplace(string text, string stripped)
+        {
+            if (stripped.Length == 0) return false;
+            return text.IndexOf(stripped, StringComparison.Ordinal) >= 0;
         }
 
         /// <summary>特殊句式：主干是固定词、变量在尾部，整串查不到，需要拆开分别处理。</summary>
