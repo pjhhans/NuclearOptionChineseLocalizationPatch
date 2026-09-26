@@ -213,46 +213,61 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 }
                 Diagnostics.Log.Info(sb.ToString());
 
-                // ---- 加宽（按选项译文实测，探针字号 = 自适应上限） ----
+                // ---- 加宽（v6：强制设定绝对宽度，SetSizeWithCurrentAnchors 对
+                //      拉伸锚也生效；v5 的 sizeDelta += 会被全拉伸锚链整链跳过） ----
                 float required = PylonDropdownPatches.MeasureMaxOptionWidth(__instance)
                     + PylonDropdownPatches.ExtraPadding;
                 float labelW = firstLabel.rectTransform.rect.width;
                 float delta = required - labelW;
-                if (delta < PylonDropdownPatches.MinDelta) return;
-                if (popupRt.rect.width + delta > PylonDropdownPatches.MaxTemplateWidth)
-                    delta = PylonDropdownPatches.MaxTemplateWidth - popupRt.rect.width;
-                if (delta < PylonDropdownPatches.MinDelta) return;
-
-                // 祖先链：标签 → 列表顶层。顶层判定：父节点是 dropdown 自身、
-                // 挂着 Canvas 组件、或没有父节点（不引 UnityEngine.UIModule，
-                // 用组件名探测 Canvas）。非拉伸锚的中间层（视口/内容/行）逐个补宽；
-                // 拉伸锚随父变宽自动跳过。
-                Transform top = firstLabel.rectTransform;
-                while (top.parent != null
-                       && top.parent != __instance.transform
-                       && !HasCanvasComponent(top.parent))
+                if (delta >= PylonDropdownPatches.MinDelta)
                 {
-                    top = top.parent;
+                    // 顶层 = 从标签向上，父为 dropdown 自身 / 挂 Canvas / 无父 为止
+                    Transform top = firstLabel.rectTransform;
+                    while (top.parent != null
+                           && top.parent != __instance.transform
+                           && !HasCanvasComponent(top.parent))
+                    {
+                        top = top.parent;
+                    }
+
+                    // 祖先链：标签 → 顶层（含）；顺带把 Item Background 兄弟纳入
+                    var chain = new List<RectTransform>();
+                    for (Transform n = firstLabel.rectTransform; n != null; n = n.parent)
+                    {
+                        chain.Add(n as RectTransform);
+                        if (n == top) break;
+                    }
+                    RectTransform item = firstLabel.rectTransform.parent as RectTransform;
+                    RectTransform bg = item != null
+                        ? item.Find("Item Background") as RectTransform : null;
+
+                    // 自顶向下应用，目标宽统一 = 修改前 rect.width + delta：
+                    // 拉伸锚节点在父加宽后 rect 已自然 +delta，再强制到同一目标 = 幂等；
+                    // 固定宽节点则被直接撑到目标。
+                    for (int i = chain.Count - 1; i >= 0; i--)
+                    {
+                        RectTransform rt = chain[i];
+                        if (rt == null) continue;
+                        DisableWidthControl(rt);
+                        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal,
+                            rt.rect.width + delta);
+                    }
+                    if (bg != null)
+                    {
+                        DisableWidthControl(bg);
+                        bg.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal,
+                            bg.rect.width + delta);
+                    }
+
+                    ClampIntoCanvas(top as RectTransform);
+
+                    // 读回验证：若仍等于旧值，说明宽度另有来源，转储整条链定位
+                    Diagnostics.Log.Info(string.Format(
+                        "[挂架下拉] 已加宽 +{0:F0}px，读回：顶层 {1:F0}px / 列表 {2:F0}px / 标签 {3:F0}px（目标 {4:F0}px）",
+                        delta, ((RectTransform)top).rect.width, popupRt.rect.width,
+                        firstLabel.rectTransform.rect.width, required));
+                    Diagnostics.Log.Info("[挂架下拉·链] " + DumpChain(chain));
                 }
-
-                Transform node = firstLabel.rectTransform;
-                while (node != null && node != top)
-                {
-                    StretchChild(node as RectTransform, delta);
-                    node = node.parent;
-                }
-                StretchChild(top as RectTransform, delta); // 列表根
-
-                // 选中高亮背景是条目标签的兄弟节点，不在祖先链上，按名补一遍。
-                RectTransform item = firstLabel.rectTransform.parent as RectTransform;
-                if (item != null)
-                    StretchChild(item.Find("Item Background") as RectTransform, delta);
-
-                ClampIntoCanvas(top as RectTransform);
-
-                Diagnostics.Log.Info(string.Format(
-                    "[挂架下拉] 已加宽 +{0:F0}px：列表 {1:F0}->{2:F0}px，标签 {3:F0}px，需宽 {4:F0}px",
-                    delta, popupRt.rect.width - delta, popupRt.rect.width, labelW, required));
             }
             catch (System.Exception ex)
             {
@@ -274,6 +289,41 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             foreach (Component comp in t.GetComponents<Component>())
                 if (comp != null && comp.GetType().Name == "Canvas") return true;
             return false;
+        }
+
+        /// <summary>
+        /// 禁掉链上节点自身/子级的横向宽度控制（LayoutGroup 的 childControlWidth、
+        /// ContentSizeFitter 的横向 fit），否则布局系统会在下一帧把强制宽度改回去。
+        /// </summary>
+        private static void DisableWidthControl(RectTransform rt)
+        {
+            var hv = rt.GetComponent<HorizontalOrVerticalLayoutGroup>();
+            if (hv != null && hv.childControlWidth) hv.childControlWidth = false;
+
+            var fitter = rt.GetComponent<ContentSizeFitter>();
+            if (fitter != null
+                && fitter.horizontalFit != ContentSizeFitter.FitMode.Unconstrained)
+                fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+        }
+
+        /// <summary>诊断转储：链上每个节点的 锚跨度/宽/sizeDelta.x/宽度控制组件。</summary>
+        private static string DumpChain(List<RectTransform> chain)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int i = chain.Count - 1; i >= 0; i--) // 顶层 → 标签
+            {
+                RectTransform rt = chain[i];
+                if (rt == null) continue;
+                if (sb.Length > 0) sb.Append(" <- ");
+                string ctrl = "";
+                if (rt.GetComponent<HorizontalOrVerticalLayoutGroup>() != null) ctrl += "+LG";
+                if (rt.GetComponent<ContentSizeFitter>() != null) ctrl += "+Fitter";
+                if (rt.GetComponent<RectMask2D>() != null) ctrl += "+Mask";
+                sb.AppendFormat("{0}[锚{1:F1}-{2:F1} w{3:F0} sd{4:F0}{5}]",
+                    rt.name, rt.anchorMin.x, rt.anchorMax.x, rt.rect.width,
+                    rt.sizeDelta.x, ctrl);
+            }
+            return sb.ToString();
         }
 
         /// <summary>列表加宽后越出画布时平移回屏内（展开方向由 TMP 的翻转逻辑决定）。</summary>
