@@ -127,17 +127,28 @@
                      以免覆盖你在游戏里热改过的 translation.json 进度。
        DeployData —— 显式全量同步数据文件（会覆盖，属有意为之）。
                      注意：它 **不触发编译**，改了 C# 要先 -t:Rebuild。
+       SkipDeploy —— 只编译、不往游戏目录推（dotnet build -p:SkipDeploy=true）。
+                     游戏开着时插件目录里的 DLL 被进程映射住，Copy 会重试 10 次再报
+                     MSB3027 让整个构建失败；只想验证「能不能编译过」时加这个参数即可。
        ================================================================== -->
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(SkipDeploy)' != 'true'">
     <ItemGroup>
       <AllOutputFiles Include="$(TargetDir)*.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(AllOutputFiles)" DestinationFolder="$(PluginDir)" />
 
     <!-- 首次安装引导。每个文件单独一条 Copy，条件写成「源存在 且 目标不存在」——
-         不能合成一个带通配符的 Copy：字面路径即使不存在也会被当成一项，直接抛 MSB3030。 -->
+         不能合成一个带通配符的 Copy：字面路径即使不存在也会被当成一项，直接抛 MSB3030。
+
+         词表按分类拆成多个文件（布局规则见 tools/_table_layout.py）。
+         升级用户无需处理：载入是**按键前缀分流**的，老的单文件词表照样能读，
+         新分类文件只会在首次安装或显式 -t:DeployData 时落地。 -->
     <Copy SourceFiles="$(DataDir)\translation.json" DestinationFolder="$(PluginDir)"
           Condition="Exists('$(DataDir)\translation.json') AND !Exists('$(PluginDir)\translation.json')" />
+    <Copy SourceFiles="$(DataDir)\templates.json" DestinationFolder="$(PluginDir)"
+          Condition="Exists('$(DataDir)\templates.json') AND !Exists('$(PluginDir)\templates.json')" />
+    <Copy SourceFiles="$(DataDir)\fragments.json" DestinationFolder="$(PluginDir)"
+          Condition="Exists('$(DataDir)\fragments.json') AND !Exists('$(PluginDir)\fragments.json')" />
     <Copy SourceFiles="$(DataDir)\exclusions.json" DestinationFolder="$(PluginDir)"
           Condition="Exists('$(DataDir)\exclusions.json') AND !Exists('$(PluginDir)\exclusions.json')" />
     <Copy SourceFiles="$(DataDir)\force_scopes.json" DestinationFolder="$(PluginDir)"

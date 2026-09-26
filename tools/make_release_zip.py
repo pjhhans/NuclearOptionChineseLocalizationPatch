@@ -10,13 +10,14 @@
 
 输出
 ----
-    NuclearOptionChineseLocalizationPatch-v1.5.5.zip
+    NuclearOptionChineseLocalizationPatch-v1.6.0.zip
       └─ NuclearOptionChineseLocalizationPatch/   ← 单一顶层目录，与 README 安装说明一致
            ├─ NuclearOptionChineseLocalizationPatch.dll
            ├─ Newtonsoft.Json.dll                  （分发第三方组件，需 LICENSE / THIRD-PARTY-NOTICES）
-           ├─ translation.json / exclusions.json / force_scopes.json
+           ├─ translation.json / templates.json / fragments.json   ← 词表（按分类拆）
+           ├─ exclusions.json / force_scopes.json
            ├─ font.ttf
-           ├─ scopes/*.json
+           ├─ scopes/*.json                        ← 作用域词条，按语义域分文件
            └─ README.md / LICENSE / THIRD-PARTY-NOTICES.md
 
 为什么要有这个脚本
@@ -57,6 +58,8 @@ RUNTIME_FILES = [
     ("NuclearOptionChineseLocalizationPatch.dll", BUILD_DIR / "NuclearOptionChineseLocalizationPatch.dll"),
     ("Newtonsoft.Json.dll", BUILD_DIR / "Newtonsoft.Json.dll"),
     ("translation.json", REPO / "data" / "translation.json"),
+    ("templates.json", REPO / "data" / "templates.json"),
+    ("fragments.json", REPO / "data" / "fragments.json"),
     ("exclusions.json", REPO / "data" / "exclusions.json"),
     ("force_scopes.json", REPO / "data" / "force_scopes.json"),
     ("font.ttf", REPO / "data" / "fonts" / "font.ttf"),

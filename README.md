@@ -5,8 +5,7 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
 它在**运行期**把界面文本替换成中文，**不修改任何游戏本体文件**。
 
 > 本项目由玩家社区维护，与 Nuclear Option 的开发者无关；游戏内容与原文版权归其开发商所有。
-
-|  |  |
+| 区块 | 内容 |
 | ---------- | ------------------------------------------------- |
 | **适配游戏版本** | 0.34.2 |
 | **当前插件版本** | v1.5.5 |
@@ -196,17 +195,31 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
 ```
 ├─ NuclearOptionChineseLocalizationPatch.dll   插件本体
 ├─ Newtonsoft.Json.dll                         JSON 解析依赖
-├─ translation.json                            词表
+├─ translation.json                            通用词条
+├─ templates.json                              整段模板（`~` 前缀）
+├─ fragments.json                              拼接片段（`>>` / `<<` / `==` 前缀）
+├─ scopes/                                     作用域词条（按语义域分文件）
+│   ├─ ui.json      界面控件        ├─ mission.json  任务目标
+│   ├─ units.json   单位兵器        ├─ hud.json      座舱读数
+│   ├─ world.json   地图战报        └─ editor.json   编辑器与多人
 ├─ exclusions.json                             不翻译 / 保持英文名单
 ├─ force_scopes.json                           强制作用域名单
 ├─ font.ttf                                    中文字体
-├─ scopes/                                     分作用域词表
-│   └─ TypeText.json
 ├─ missing.json                                ← 默认不生成（开启「累积漏译」后才写盘，可随时删）
 └─ untranslated.json                           ← 同上
 ```
 
 > 插件目录是**扁平**的：词表直接放在根下，**没有 `data/` 这一层**。
+>
+> 词表为什么拆成多个文件、以及为什么按**语义域**拆作用域，见
+> [`docs/ARCHITECTURE.md` §2.1](docs/ARCHITECTURE.md)。一句话：前三类与运行时的索引
+> 结构一一对应，作用域独立成表后最热的通用表从 4600+ 条降到约 2700 条；
+> 而作用域**不能**一个文件一个 —— Windows 下 NTFS 不区分大小写，本仓库有
+> `Text`/`text` 这类只差大小写的成对作用域，那样拆会直接丢数据。
+>
+> **升级用户不必做任何事**：载入按键上的前缀分流，与键在哪个文件无关，
+> 老的单文件词表照样能读。想立刻用上新布局，构建时加 `-t:DeployData`。
+
 
 ### 仓库结构
 
@@ -229,10 +242,12 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
 │   ├─ Configuration/                    配置项定义
 │   └─ Diagnostics/                      日志、漏译记录、自检
 ├─ data/                             词表与资源（构建时同步到插件目录）
-│   ├─ translation.json                  词表（唯一事实来源）
+│   ├─ translation.json                  通用词条
+│   ├─ templates.json                    整段模板（`~` 前缀）
+│   ├─ fragments.json                    拼接片段（`>>` / `<<` / `==` 前缀）
+│   ├─ scopes/                           作用域词条，按语义域分文件
 │   ├─ exclusions.json                   不翻译 / 保持英文名单
 │   ├─ force_scopes.json                 强制作用域名单
-│   ├─ scopes/                           分作用域词表
 │   └─ fonts/font.ttf                    中文字体
 ├─ docs/
 │   ├─ ARCHITECTURE.md               架构、数据契约与实现理由

@@ -133,8 +133,8 @@ namespace NuclearOptionChineseLocalizationPatch
 
             RuntimeStatus.LastReloadDetail = initial ? "启动载入成功" : "热重载成功";
             Log.Info(
-                $"词表已载入：普通 {Table.GlobalCount} / 模板 {Table.TemplateCount} / " +
-                $"片段 {Table.FragmentCount} / 作用域 {Table.ScopeCount}；" +
+                $"词表已载入：共 {Table.TotalEntryCount} 条 —— 通用 {Table.GlobalCount} / 模板 {Table.TemplateCount} / " +
+                $"片段 {Table.FragmentCount} / 作用域词条 {Table.ScopedEntryCount}（{Table.ScopeCount} 个作用域）；" +
                 $"模板指纹 {Table.TemplateFingerprintCount} 条（回落匹配用）；" +
                 $"排除名单 scopes {Exclusions.ScopeCount} / terms {Exclusions.TermCount} / texts {Exclusions.TextCount}" +
                 (initial ? "" : "（热重载）"));

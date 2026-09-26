@@ -232,10 +232,28 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// <summary>剥掉形如 <c>[Scope]</c> 的前缀。作用域名长度设为 1–40，避免把正文里的方括号误当作用域。</summary>
         internal static string StripScopePrefix(string text)
         {
-            if (string.IsNullOrEmpty(text) || text[0] != '[') return text;
+            string scope, rest;
+            return TrySplitScopePrefix(text, out scope, out rest) ? rest : text;
+        }
+
+        /// <summary>
+        /// 拆分 <c>[Scope]原文</c>。判据与 <see cref="StripScopePrefix"/> 完全一致
+        /// （<c>[</c> 开头、<c>]</c> 落在第 2–41 个字符、且作用域名非空）——
+        /// 两处口径必须一致，否则「词表里算作用域、加载时算通用词条」会分叉。
+        ///
+        /// <para>词表加载器用它把作用域词条直接放进对应分表（<c>_scoped</c>），
+        /// 于是通用的 <c>_global</c> 不再被 2000 条带前缀的键撑大。</para>
+        /// </summary>
+        internal static bool TrySplitScopePrefix(string text, out string scope, out string rest)
+        {
+            scope = null;
+            rest = null;
+            if (string.IsNullOrEmpty(text) || text[0] != '[') return false;
             int close = text.IndexOf(']');
-            if (close <= 0 || close > 41) return text;
-            return text.Substring(close + 1);
+            if (close <= 0 || close > 41) return false;
+            scope = text.Substring(1, close - 1);
+            rest = text.Substring(close + 1);
+            return scope.Length > 0;
         }
 
         private sealed class ExclusionDto
