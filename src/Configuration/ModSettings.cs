@@ -15,6 +15,7 @@ namespace NuclearOptionChineseLocalizationPatch.Configuration
         internal readonly ConfigEntry<int> TranslationCacheLimit;
         internal readonly ConfigEntry<bool> LogMisses;
         internal readonly ConfigEntry<float> ScanIntervalSeconds;
+        internal readonly ConfigEntry<bool> WidenWeaponDropdown;
 
         internal ModSettings(ConfigFile config)
         {
@@ -50,6 +51,12 @@ namespace NuclearOptionChineseLocalizationPatch.Configuration
             TranslationCacheLimit = config.Bind(
                 "Performance", "TranslationCacheLimit", 20000,
                 "翻译结果缓存条目上限。0 表示禁用缓存（不推荐）。");
+
+            WidenWeaponDropdown = config.Bind(
+                "UI", "WidenWeaponDropdown", true,
+                "挂架武器下拉列表宽度自适应：弹出列表装不下中文武器名时自动加宽到刚好够"
+                + "（收起态按钮不变；超出屏幕右缘由 TMP 自带的翻转逻辑处理）。"
+                + "顺带把该列表滚动条方向规范化为 BottomToTop——游戏预制体方向是反的，属游戏 bug。");
         }
     }
 }

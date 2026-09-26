@@ -64,6 +64,7 @@ namespace NuclearOptionChineseLocalizationPatch
             Localizer = new TextLocalizer(Table, Exclusions, MissLog);
             Localizer.Enabled = Settings.Enabled.Value;
             Localizer.SetCacheLimit(Settings.TranslationCacheLimit.Value);
+            Patching.PylonDropdownPatches.Enabled = Settings.WidenWeaponDropdown.Value;
 
             RuntimeStatus.DataDir = PluginPaths.BaseDir;
             // 兜底扫描默认关闭（0）：补丁路径已覆盖绝大多数文本，周期性全内存枚举
