@@ -11,6 +11,7 @@
   6. 片段键长度非空                       —— 空的片段键会匹配一切
   7. 键严格按码点升序、且无字面重复键     —— 保证「批量补词条」永远是干净的最小 diff
   8. 已裁决废弃的译法不得回流             —— 口径统一后靠这一条守住（见 RETIRED_TERMS）
+  9. 英文舰名残留（提示级）               —— 舰名统一中文后，值里不该再有「英文词 + 级」
 
 用法:
     python tools/check_data.py [数据目录]
@@ -34,7 +35,10 @@ TAG_RE = re.compile(r"<[^>]*>")
 #   · 转管炮：原「转轴炮台」，用户裁决「转轴 → 转管」
 #   · 自动机炮：原「自动机枪 / 自动炮」，口径规则「≥20mm 为炮、<20mm 为枪」
 #   · 内置机炮：原「内置火炮」，同一组 UI 标签（Internal Gun / Internal guns）应一致
-#   · 舰名逐条中文化：Cursor Class -> 光标级、Argus Class -> 阿尔戈斯级（注：「X 级」不留空格）
+#   · 舰名统一中文（2026-09-26）：Cursor Class 光标级 / Argus Class 阿尔戈斯级 /
+#     Atlas Class 阿特拉斯级 / Devotion Class 忠诚级 / Ironside Class 堡垒级 /
+#     Manticore Class 蝎尾狮级 / Styx-class 斯堤克斯级 / Surf Class 涌浪级 /
+#     Tranche Class 裁波级 / Andromeda class 安德洛墨达级（注：「X 级」不留空格）
 RETIRED_TERMS = {
     "箔条弹": "干扰弹",
     "热诱弹": "干扰弹",
@@ -43,7 +47,19 @@ RETIRED_TERMS = {
     "内置火炮": "内置机炮",
     "Cursor 级": "光标级",
     "Argus 级": "阿尔戈斯级",
+    # 2026-09-26 「舰名统一中文」：以下 8 条英文舰名全部改中文（用户逐条裁决）
+    "Atlas 级": "阿特拉斯级",
+    "Devotion 级": "忠诚级",
+    "Ironside 级": "堡垒级",
+    "Manticore 级": "蝎尾狮级",
+    "Styx 级": "斯堤克斯级",
+    "Surf 级": "涌浪级",
+    "Tranche 级": "裁波级",
+    "Andromeda 级": "安德洛墨达级",
 }
+
+# 「英文词 + 级」= 还没中文化的舰名（型号 / 数字单位不会被匹配：要求 ≥3 个字母起头）
+EN_SHIP_RE = re.compile(r"([A-Za-z][A-Za-z\-]{2,})\s*级")
 
 problems = []
 notes = []
@@ -175,6 +191,23 @@ def check_retired_terms(table):
         notes.append("废弃译法扫描：%d 项口径均无回流" % len(RETIRED_TERMS))
 
 
+def check_ship_names(table):
+    """舰名已统一中文（2026-09-26 用户裁决）—— 值里不该再出现「英文词 + 级」。
+
+    只提示不报错：型号（`PAB-250LR`）与数字单位（`8t 级装甲车`）都不会命中
+    （正则要求 ≥3 个字母起头、且紧跟「级」），命中即说明有新的英文舰名待中文化。
+    """
+    hits = collections.Counter()
+    for key, value in table.items():
+        if not isinstance(value, str):
+            continue
+        for match in EN_SHIP_RE.finditer(value):
+            hits[match.group(1)] += 1
+    if hits:
+        notes.append("待中文化的英文舰名 %d 个: %s"
+                     % (len(hits), " / ".join(sorted(hits))))
+
+
 def main():
     data_dir = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DATA
 
@@ -196,6 +229,7 @@ def main():
     check_brackets(table)
     check_same_text(table)
     check_retired_terms(table)
+    check_ship_names(table)
 
     for note in notes:
         print("提示: " + note)
