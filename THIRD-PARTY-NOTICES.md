@@ -74,7 +74,7 @@ SOFTWARE.
 
 ## 6. 派生关系声明
 
-本项目的词表（`data/translation.json`）中有少量条目源自或参考了**前身项目**：
+本项目的词表（`data/` 下的分类文件，布局见 `docs/ARCHITECTURE.md` 2.1）中有少量条目源自或参考了**前身项目**：
 
 - **前身项目**：[HunterCHCL/NuclearOption-Chinese-Translation-mod](https://github.com/HunterCHCL/NuclearOption-Chinese-Translation-mod)
 - **可追溯条目**：指译文与上游提供的翻译素材逐字一致的条目。另有少数条目在更早的开发阶段参考过上游素材，其后已作改写。
