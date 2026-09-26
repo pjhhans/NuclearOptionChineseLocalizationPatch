@@ -47,6 +47,8 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         private const float ExtraPadding = 8f;       // 文字与边缘之间的呼吸空间
 
         private static FieldInfo _dropdownField;
+        private static FieldInfo _popupField;
+        private static readonly HashSet<TMP_Dropdown> _tracked = new HashSet<TMP_Dropdown>();
 
         /// <summary>
         /// 目标 = WeaponSelector.PopulateOptions 的全部重载。
@@ -63,6 +65,50 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             foreach (MethodInfo m in AccessTools.GetDeclaredMethods(type))
                 if (m.Name == "PopulateOptions") yield return m;
+        }
+
+        /// <summary>
+        /// 诊断用：Show 展开弹出列表后取渲染真相（列表宽、条目文字的实测宽度/字号）。
+        /// 只对挂架下拉生效（_tracked 里登记过的实例）。
+        /// </summary>
+        [HarmonyPatch(typeof(TMP_Dropdown), "Show")]
+        [HarmonyPostfix]
+        internal static void ShowPostfix(TMP_Dropdown __instance)
+        {
+            if (!Enabled || !_tracked.Contains(__instance)) return;
+
+            try
+            {
+                if (_popupField == null)
+                    _popupField = AccessTools.Field(typeof(TMP_Dropdown), "m_Dropdown");
+                object popupObj = _popupField?.GetValue(__instance);
+                GameObject popup = popupObj as GameObject ?? (popupObj as Component)?.gameObject;
+                if (popup == null) return;
+
+                RectTransform rt = popup.transform as RectTransform;
+                float popupW = rt != null ? rt.rect.width : -1f;
+
+                TMP_Text[] texts = popup.GetComponentsInChildren<TMP_Text>(false);
+                var sb = new System.Text.StringBuilder();
+                sb.AppendFormat("[挂架下拉·Show] 列表宽 {0:F0}px，条目文本组件 {1} 个", popupW, texts.Length);
+                int shown = 0;
+                for (int i = 0; i < texts.Length && shown < 3; i++)
+                {
+                    TMP_Text t = texts[i];
+                    string s = t.text;
+                    if (string.IsNullOrEmpty(s)) continue;
+                    float pref = t.GetPreferredValues(s).x;
+                    sb.AppendFormat(" | #{0} \"{1}\" 字号{2:F1} 自适应{3} 宽{4:F0} 量测{5:F0} 字体{6}",
+                        shown, s, t.fontSize, t.enableAutoSizing, t.rectTransform.rect.width, pref,
+                        t.font != null ? t.font.name : "null");
+                    shown++;
+                }
+                Diagnostics.Log.Info(sb.ToString());
+            }
+            catch (System.Exception ex)
+            {
+                Diagnostics.Log.Warn("挂架下拉 Show 诊断失败：" + ex.GetType().Name + ": " + ex.Message);
+            }
         }
 
         [HarmonyPostfix]
@@ -84,6 +130,14 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 float templateW = template.rect.width;
                 float labelW = itemText.rectTransform.rect.width;
                 float maxPref = MeasureMaxOptionWidth(itemText, dd.options);
+
+                _tracked.Add(dd);
+                Diagnostics.Log.Info(string.Format(
+                    "[挂架下拉·量测] 模板 {0:F0}px，标签 {1:F0}px，最长译文 {2:F0}px；标签字号 {3:F1}，自适应 {4}（{5:F0}~{6:F0}），字体 {7}，溢出 {8}，层级 {9}",
+                    templateW, labelW, maxPref,
+                    itemText.fontSize, itemText.enableAutoSizing, itemText.fontSizeMin, itemText.fontSizeMax,
+                    itemText.font != null ? itemText.font.name : "null",
+                    itemText.overflowMode, PathOf(itemText.transform, template)));
 
                 float delta = maxPref + ExtraPadding - labelW;
                 if (delta >= MinDelta && templateW + delta <= MaxTemplateWidth)
@@ -170,6 +224,20 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         {
             Transform t = root.Find(path);
             return t as RectTransform;
+        }
+
+        /// <summary>诊断用：从 root 到 node 的层级路径。</summary>
+        private static string PathOf(Transform startNode, Transform root)
+        {
+            var sb = new System.Text.StringBuilder();
+            Transform cur = startNode;
+            while (cur != null && cur != root)
+            {
+                if (sb.Length > 0) sb.Insert(0, '/');
+                sb.Insert(0, cur.name);
+                cur = cur.parent;
+            }
+            return sb.ToString();
         }
     }
 }
