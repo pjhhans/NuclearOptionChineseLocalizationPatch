@@ -12,10 +12,17 @@ data/*.bak
 data/*.bak_*
 data/*.bak.*
 
+# 审核台（tools/review）保存前自动做的备份，同理不入库
+data/.backups/
+
 # 运行期累积的诊断产物：游戏里跑一轮就会生成，内容是当时的漏译快照，
 # 属于「工作清单」而不是「源码」，只该留在本机。
 missing.json
 untranslated.json
+
+# Python 字节码缓存（跑过 tools/review 就会生成，属机器产物）
+__pycache__/
+*.pyc
 
 # 编辑器
 .vs/

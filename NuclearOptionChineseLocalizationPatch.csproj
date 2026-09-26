@@ -144,6 +144,17 @@
     <!-- scopes/ 整个目录一次性引导：目录已存在就完全不动，避免覆盖用户的 scope 定制 -->
     <Copy SourceFiles="@(BootstrapScopes)" DestinationFolder="$(PluginDir)\scopes"
           Condition="!Exists('$(PluginDir)\scopes')" />
+
+    <!-- 随包分发的文档。与数据文件不同，这几份不存在「用户在游戏里热改」的情况，
+         所以每次都直接覆盖，保证插件目录里的许可声明与仓库一致。
+         LICENSE 与 THIRD-PARTY-NOTICES.md 是分发第三方组件（Newtonsoft.Json.dll / font.ttf）
+         的合规要求，不能漏。 -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)README.md" DestinationFolder="$(PluginDir)"
+          Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)LICENSE" DestinationFolder="$(PluginDir)"
+          Condition="Exists('$(MSBuildThisFileDirectory)LICENSE')" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)THIRD-PARTY-NOTICES.md" DestinationFolder="$(PluginDir)"
+          Condition="Exists('$(MSBuildThisFileDirectory)THIRD-PARTY-NOTICES.md')" />
   </Target>
 
   <ItemGroup>
