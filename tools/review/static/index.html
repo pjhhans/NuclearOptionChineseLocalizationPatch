@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>翻译审核台 · Nuclear Option 汉化词表</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="logo">译</span>
+    <div>
+      <h1>翻译审核台</h1>
+      <div class="sub" id="brandSub">正在载入…</div>
+    </div>
+  </div>
+  <div class="topActions">
+    <span class="pill" id="pillTable">词表 —</span>
+    <span class="pill" id="pillPlugin">运行目录 —</span>
+    <button class="btn ghost" id="btnReload">重新载入</button>
+    <button class="btn ghost" id="btnTheme" title="切换明暗">◐</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-view="entries">词条</button>
+  <button class="tab" data-view="runtime">运行期清单 <b id="tabRuntimeCount"></b></button>
+  <button class="tab" data-view="inconsistency">不一致清单 <b id="tabInconCount"></b></button>
+  <button class="tab" data-view="audit">体检报告 <b id="tabAuditCount"></b></button>
+  <button class="tab" data-view="files">文件与部署</button>
+  <button class="tab" data-view="help">说明</button>
+</nav>
+
+<main>
+
+  <!-- ===================== 词条 ===================== -->
+  <section class="view active" id="view-entries">
+    <aside class="side">
+      <div class="field">
+        <label>搜索（原文 / 译文 / 键）</label>
+        <input type="search" id="q" placeholder="按 / 聚焦…（支持中文与英文片段）">
+      </div>
+
+      <div class="field">
+        <label>类型</label>
+        <div class="chips" id="kindChips"></div>
+      </div>
+
+      <div class="field">
+        <label>作用域</label>
+        <select id="scopeSel"><option value="">全部</option></select>
+      </div>
+
+      <div class="field">
+        <label>风险标签 <span class="hint" id="flagHint"></span></label>
+        <div class="chips" id="flagChips"></div>
+        <div class="row2">
+          <button class="btn tiny ghost" id="btnFlagNone">清空</button>
+          <button class="btn tiny ghost" id="btnFlagHigh">只看高危</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>排序</label>
+        <select id="sortSel">
+          <option value="file">文件顺序（同族相邻）</option>
+          <option value="risk">风险优先</option>
+          <option value="width">译文偏长优先</option>
+          <option value="key">键名</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>每页</label>
+        <select id="limitSel">
+          <option>100</option><option selected>200</option>
+          <option>400</option><option>800</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>待保存改动 <b id="pendingCount">0</b></label>
+        <div id="pendingList" class="pendingList"></div>
+        <div class="row2">
+          <button class="btn tiny ghost" id="btnPreviewDiff">查看 diff</button>
+          <button class="btn tiny ghost" id="btnClearPending">清空</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <button class="btn block" id="btnAdd">＋ 新增词条</button>
+      </div>
+    </aside>
+
+    <div class="content">
+      <div class="listHead">
+        <span id="listInfo">—</span>
+        <div class="pager">
+          <button class="btn tiny ghost" id="btnPrev">← 上一页</button>
+          <span id="pageInfo">—</span>
+          <button class="btn tiny ghost" id="btnNext">下一页 →</button>
+        </div>
+      </div>
+      <div class="tableWrap">
+        <table class="grid" id="grid">
+          <thead>
+            <tr>
+              <th class="c-line">行</th>
+              <th class="c-kind">类型</th>
+              <th class="c-scope">作用域</th>
+              <th class="c-src">原文</th>
+              <th class="c-dst">译文</th>
+              <th class="c-w">宽</th>
+              <th class="c-flag">标签</th>
+            </tr>
+          </thead>
+          <tbody id="gridBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <aside class="detail" id="detail">
+      <div class="empty">点击左侧任一行查看详情并编辑。</div>
+    </aside>
+  </section>
+
+  <!-- ===================== 运行期清单 ===================== -->
+  <section class="view" id="view-runtime">
+    <div class="pad">
+      <div class="panel">
+        <div class="panelHead">
+          <h2>运行期清单</h2>
+          <div>
+            <button class="btn ghost" id="btnRuntimeReload">重新读取</button>
+          </div>
+        </div>
+        <p class="warn">
+          <b>这是近似判定，不代表流水线结论。</b>
+          这里只查「键在不在表里」「作用域/文本在不在排除名单里」「表里有没有包含这段文字的键」，
+          <b>没有</b>复刻运行时的片段拼接 / 切片 / 前缀尾缀匹配 —— 那部分会让一批本来能翻的
+          条目被判成缺口（历史上静态比对的误报率约 23%）。所以分了四档：
+          <code>已有通路</code> · <code>疑似有通路</code>（表里存在包含它的键，多半是拼接）·
+          <code>刻意保留</code> · <code>可疑缺口</code>。
+          最后两档才值得人工看，而且<b>玩家名与动态呼号会必然落在「可疑缺口」里</b>——那是正常的，
+          按项目约定不登记。
+        </p>
+        <div class="stat" id="runtimeStat">—</div>
+        <div class="tableWrap">
+          <table class="grid">
+            <thead>
+              <tr><th>来源</th><th>判定</th><th>作用域</th><th>条目</th><th>依据</th></tr>
+            </thead>
+            <tbody id="runtimeBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 不一致清单 ===================== -->
+  <section class="view" id="view-inconsistency">
+    <div class="pad">
+      <div class="panel">
+        <div class="panelHead"><h2>同原文多译文</h2></div>
+        <p class="hint">
+          同一段英文在表里应当只有一个译文。刻意例外有两种：
+          <b>目标代号 identity</b>（<code>[TargetCode]BLD → BLD</code>，保持英文）
+          与 <b>作用域语义分歧</b>（<code>deployed</code> 反推展开 / 起落架放下）。
+          其余都属于「该统一而没统一」。
+        </p>
+        <div id="multiList"></div>
+      </div>
+      <div class="panel">
+        <div class="panelHead"><h2>忽略大小写重复的键</h2></div>
+        <p class="hint">
+          运行时是 <code>OrdinalIgnoreCase</code> 字典，<b>译文不同</b>则后者静默覆盖前者
+          ——这是会真出问题的；译文相同则只是历史冗余。
+        </p>
+        <div id="caseList"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 体检报告 ===================== -->
+  <section class="view" id="view-audit">
+    <div class="pad">
+      <div class="panel">
+        <div class="panelHead">
+          <h2>体检报告</h2>
+          <button class="btn ghost" id="btnAuditReload">重新体检</button>
+        </div>
+        <div id="auditBox">—</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 文件与部署 ===================== -->
+  <section class="view" id="view-files">
+    <div class="pad">
+      <div class="panel">
+        <div class="panelHead"><h2>文件状态</h2></div>
+        <div class="tableWrap">
+          <table class="grid">
+            <thead><tr><th>文件</th><th>大小</th><th>md5</th><th>最后修改</th></tr></thead>
+            <tbody id="fileBody"></tbody>
+          </table>
+        </div>
+        <p class="hint">
+          「仓库词表」与「运行目录词表」md5 不一致 = 仓库改过但还没同步到游戏。
+        </p>
+      </div>
+      <div class="panel">
+        <div class="panelHead"><h2>部署到运行目录</h2></div>
+        <p class="hint">
+          把仓库 <code>data/</code> 下的词表 / 排除名单 / force_scopes / scopes / 字体
+          全量同步到插件运行目录（与 <code>dotnet build -t:DeployData</code> 同一语义）。
+          <b>只推数据、不碰 DLL</b>：DLL 改动要靠重新构建。
+          本工具的「保存并部署」会在保存成功后再执行这一步。
+        </p>
+        <div class="row2">
+          <button class="btn" id="btnDeploy">立即同步数据到运行目录</button>
+        </div>
+        <pre class="out" id="deployOut"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 说明 ===================== -->
+  <section class="view" id="view-help">
+    <div class="pad">
+      <div class="panel prose" id="helpBox"></div>
+    </div>
+  </section>
+</main>
+
+<!-- 底部改动条 -->
+<footer class="bottom" id="bottom">
+  <div class="pendInfo" id="bottomInfo">无待保存改动</div>
+  <div class="bottomActions">
+    <label class="chk"><input type="checkbox" id="chkDeploy" checked> 保存后自动同步到运行目录</label>
+    <button class="btn ghost" id="btnExport">导出改动 JSON</button>
+    <button class="btn primary" id="btnSave">保存改动</button>
+  </div>
+</footer>
+
+<!-- 弹层 -->
+<div class="modal" id="modal">
+  <div class="modalBox">
+    <div class="modalHead">
+      <h2 id="modalTitle">—</h2>
+      <button class="btn ghost" id="modalClose">关闭</button>
+    </div>
+    <div class="modalBody" id="modalBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
