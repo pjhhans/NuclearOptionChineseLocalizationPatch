@@ -83,6 +83,7 @@
   "~Radar pings appear as lines on your minimap\n\nGrey = this radar has probably not detected you\nYellow = this radar has probably detected you\nRed = this radar is actively targeting you": "雷达回波会以线条形式显示在你的迷你地图上\n\n灰色 = 该雷达多半还没发现你\n黄色 = 该雷达多半已经发现你\n红色 = 该雷达正在主动锁定你",
   "~Radar pings appear as lines on your minimap\n\\r\nGrey = this radar has probably not detected you\\r\nYellow = this radar has probably detected you\\r\nRed = this radar is actively targeting you": "雷达信号在小地图上显示为线条\n\\r\n灰色 = 该雷达可能未发现你；\\r\n黄色 = 该雷达可能已发现你；\\r\n红色 = 该雷达正在主动锁定你",
   "~Red icons denote enemy units.\n\nBlue icons denote friendly units.\n\n\nDo not fire on the blue icons.": "红色图标代表敌方单位。\n\n蓝色图标代表友方单位。\n\n\n不要向蓝色图标开火。",
+  "~Requisition\n via Rank ({#})": "申请需 {#} 级",
   "~Return\nAlkyon AB-4": "归还\n阿尔基翁 AB-4",
   "~Sell\nA-19 Brawler": "出售\nA-19 斗士",
   "~Sell\nAlkyon AB-4": "出售\n阿尔基翁 AB-4",

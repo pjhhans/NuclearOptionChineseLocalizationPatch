@@ -56,6 +56,16 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
         private int _fingerprintCollisions;
 
+        /// <summary>
+        /// 参数化模板（键含 <see cref="ParamMarker"/>，即 <c>{#}</c>），见 <see cref="AddParamTemplate"/>。
+        /// 与精确/指纹索引**互斥**：带标记的键不会进那两个索引（真实文本里不会出现 <c>{#}</c>，
+        /// 进了也永远命不中，白占内存）。
+        /// </summary>
+        private readonly List<ParamTemplate> _paramTemplates = new List<ParamTemplate>();
+
+        /// <summary>参数化模板实际命中次数（诊断用；仅在命中时累加）。</summary>
+        internal int ParamTemplateHits;
+
         private readonly Dictionary<string, string> _reverse =
             new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -137,6 +147,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
             _global.Clear(); _templates.Clear(); _reverse.Clear();
             _templateFingerprints.Clear(); _fingerprintCollisions = 0;
+            _paramTemplates.Clear(); ParamTemplateHits = 0;
             _prefixFragments.Clear(); _suffixFragments.Clear(); _infixFragments.Clear();
             _scoped.Clear(); _scopedEntries = 0; _forceScoped.Clear();
             _minTemplateKeyLength = int.MaxValue;
@@ -188,6 +199,19 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 {
                     string canonical = TextCanonicalizer.Canonicalize(key.Substring(1));
                     if (canonical.Length == 0) continue;
+
+                    // 参数化模板（{#} = 一段数字）：走独立索引，不进精确/指纹。
+                    // 键里的数字位是变化的（如「via Rank ({0})」运行时填等级），
+                    // 精确/指纹都对它无能为力。门禁仍用 _minTemplateKeyLength，
+                    // 所以这里也要参与最短键长统计（按 {#} 取最短可能 —— 1 位数字）。
+                    if (canonical.IndexOf(ParamMarker, StringComparison.Ordinal) >= 0)
+                    {
+                        AddParamTemplate(canonical, value);
+                        int minLength = ParamMinLength(canonical);
+                        if (minLength < _minTemplateKeyLength) _minTemplateKeyLength = minLength;
+                        continue;
+                    }
+
                     _templates[canonical] = value;
                     if (canonical.Length < _minTemplateKeyLength) _minTemplateKeyLength = canonical.Length;
 
@@ -368,34 +392,185 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// 整段模板查询。<paramref name="text"/> 会先归一化；
         /// 短于最短模板键长的文本直接判否（门禁）。
         ///
-        /// <para><b>两步</b>：先逐字符精确匹配；失配则退到<b>去标签指纹</b>匹配 ——
+        /// <para><b>三步</b>：先逐字符精确匹配；失配则退到<b>去标签指纹</b>匹配 ——
         /// 教程弹窗的 <c>&lt;bind=X&gt;</c> 会被游戏在写入控件前解析成字形 / 文本 / 空，
         /// 标签个数因此与词表键不一致。没有这一步的话，那类卡片会整行停留在英文，
-        /// 而且日志干净、只留一条漏译记录（查不出来源）。</para>
+        /// 而且日志干净、只留一条漏译记录（查不出来源）。
+        /// 再失配则退到<b>参数化模板</b>（键含 <c>{#}</c>，见 <see cref="AddParamTemplate"/>）。</para>
         /// </summary>
         internal bool TryGetTemplate(string text, out string value)
         {
             value = null;
             if (string.IsNullOrEmpty(text)) return false;
-            if (_templates.Count == 0 || text.Length < _minTemplateKeyLength) return false;
+            if (_templates.Count == 0 && _paramTemplates.Count == 0) return false;
+            if (text.Length < _minTemplateKeyLength) return false;
 
             string canonical = TextCanonicalizer.Canonicalize(text);
             if (canonical.Length < _minTemplateKeyLength) return false;
             if (_templates.TryGetValue(canonical, out value) && value != null) return true;
 
-            // ---- 回落：去标签指纹
-            if (_templateFingerprints.Count == 0) return false;
-            string fingerprint = TextCanonicalizer.Fingerprint(canonical);
-            if (fingerprint.Length >= TextCanonicalizer.MinFingerprintLength
-                && _templateFingerprints.TryGetValue(fingerprint, out value)
-                && value != null)
+            // ---- 回落一：去标签指纹
+            if (_templateFingerprints.Count > 0)
             {
-                TemplateFingerprintHits++;
-                return true;
+                string fingerprint = TextCanonicalizer.Fingerprint(canonical);
+                if (fingerprint.Length >= TextCanonicalizer.MinFingerprintLength
+                    && _templateFingerprints.TryGetValue(fingerprint, out value)
+                    && value != null)
+                {
+                    TemplateFingerprintHits++;
+                    return true;
+                }
+            }
+
+            // ---- 回落二：参数化模板（{#} = 一段数字）。命中即展开成最终译文。
+            if (_paramTemplates.Count > 0)
+            {
+                string expanded = MatchParamTemplates(canonical);
+                if (expanded != null)
+                {
+                    ParamTemplateHits++;
+                    value = expanded;
+                    return true;
+                }
             }
 
             value = null;
             return false;
+        }
+
+        /// <summary>
+        /// 参数化模板的占位标记（<c>{#}</c>）：键里表示「这里是一段**变化**的数字」，
+        /// 译文里表示「把命中的数字原样填回来」。
+        ///
+        /// <para>动机：游戏会把运行期数字直接格式化进文本再写控件
+        /// （如 <c>Requisition\n via Rank ({0})</c> → <c>…(2)</c>），
+        /// 数字逐机不同 ⇒ 精确键与去标签指纹都命不中，而多行文本又被逐行切分，
+        /// 换行拆不掉 —— 表现就是按钮文字两行、溢出边框。
+        /// 参数化模板在多行切分**之前**的模板路径整串命中，译文写成一行即可合并换行。</para>
+        ///
+        /// <para><b>约束（加载时校验，违反即丢弃该键）</b>：固定段不得以数字**开头**
+        /// —— 否则前一个 <c>{#}</c> 贪婪吃位后会失配；<c>{#}</c> 至少匹配一位数字。</para>
+        /// </summary>
+        internal const string ParamMarker = "{#}";
+
+        /// <summary>键按 1 位数字展开后的最短可能长度（供模板路径的门禁）。</summary>
+        private static int ParamMinLength(string canonical)
+        {
+            return canonical.Length
+                   - (Occurrences(canonical, ParamMarker) * (ParamMarker.Length - 1));
+        }
+
+        /// <summary>
+        /// 注册一条参数化模板。<paramref name="canonical"/> 是**已归一化**的键（含 <c>{#}</c>），
+        /// <paramref name="value"/> 是译文（也可含 <c>{#}</c>，命中后按顺序回填数字；
+        /// 若还含标签占位符，会在 <see cref="TextCanonicalizer.ExpandTemplate"/> 里照常回填标签）。
+        /// </summary>
+        private void AddParamTemplate(string canonical, string value)
+        {
+            string[] segments = canonical.Split(new[] { ParamMarker }, StringSplitOptions.None);
+            if (segments.Length < 2) return;                 // 没有 {#}，不该走到这
+
+            // 固定段不得以数字开头：前一个 {#} 贪婪吃完数字后，剩余数字会被误判进固定段。
+            // （首段允许任意，因为 {#} 前没有贪婪问题；尾段同理只看开头。）
+            for (int i = 1; i < segments.Length; i++)
+            {
+                if (segments[i].Length > 0 && IsAsciiDigit(segments[i][0])) return;
+            }
+
+            _paramTemplates.Add(new ParamTemplate(segments, value, ParamMinLength(canonical)));
+        }
+
+        private string MatchParamTemplates(string canonical)
+        {
+            foreach (ParamTemplate pt in _paramTemplates)
+            {
+                if (canonical.Length < pt.MinLength) continue;
+                string expanded = pt.Match(canonical);
+                if (expanded != null) return expanded;
+            }
+            return null;
+        }
+
+        private static bool IsAsciiDigit(char c)
+        {
+            return c >= '0' && c <= '9';
+        }
+
+        private static int Occurrences(string s, string marker)
+        {
+            int n = 0, at = 0;
+            while ((at = s.IndexOf(marker, at, StringComparison.Ordinal)) >= 0)
+            {
+                n++;
+                at += marker.Length;
+            }
+            return n;
+        }
+
+        /// <summary>参数化模板：固定段 + 数字位。见 <see cref="AddParamTemplate"/>。</summary>
+        private sealed class ParamTemplate
+        {
+            /// <summary><c>{#}</c> 之间的固定段。段数 = 数字位数 + 1；首尾段可能为空串。</summary>
+            internal readonly string[] Segments;
+            internal readonly string Value;
+            internal readonly int MinLength;
+
+            internal ParamTemplate(string[] segments, string value, int minLength)
+            {
+                Segments = segments;
+                Value = value;
+                MinLength = minLength;
+            }
+
+            /// <summary>
+            /// 整串匹配：<c>{#}</c> 至少吃一位数字（贪婪），固定段逐字符对齐，
+            /// 末尾要求**整串消耗完**（防前缀撞车）。命中返回把数字回填后的译文。
+            /// </summary>
+            internal string Match(string canonical)
+            {
+                int pos = 0;
+                List<string> numbers = new List<string>(Segments.Length);
+                for (int s = 0; s < Segments.Length; s++)
+                {
+                    if (s > 0)
+                    {
+                        int start = pos;
+                        while (pos < canonical.Length && IsAsciiDigit(canonical[pos])) pos++;
+                        if (pos == start) return null;       // {#} 至少一位数字
+                        numbers.Add(canonical.Substring(start, pos - start));
+                    }
+
+                    string seg = Segments[s];
+                    if (seg.Length == 0) continue;
+                    if (pos + seg.Length > canonical.Length
+                        || string.CompareOrdinal(canonical, pos, seg, 0, seg.Length) != 0)
+                    {
+                        return null;
+                    }
+                    pos += seg.Length;
+                }
+
+                if (pos != canonical.Length) return null;    // 只匹配了前缀 ⇒ 不算
+
+                // 回填：译文里的 {#} 按顺序替换成捕获的数字。
+                string value = Value;
+                if (value.IndexOf(ParamMarker, StringComparison.Ordinal) >= 0)
+                {
+                    var sb = new System.Text.StringBuilder(value.Length + 8);
+                    int from = 0, idx = 0;
+                    int at;
+                    while ((at = value.IndexOf(ParamMarker, from, StringComparison.Ordinal)) >= 0)
+                    {
+                        sb.Append(value, from, at - from);
+                        sb.Append(idx < numbers.Count ? numbers[idx] : string.Empty);
+                        idx++;
+                        from = at + ParamMarker.Length;
+                    }
+                    sb.Append(value, from, value.Length - from);
+                    value = sb.ToString();
+                }
+                return value;
+            }
         }
 
         /// <summary>指纹回落实际命中次数（诊断用；仅在回落时累加）。</summary>
