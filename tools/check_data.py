@@ -34,6 +34,7 @@ TAG_RE = re.compile(r"<[^>]*>")
 #   · 转管炮：原「转轴炮台」，用户裁决「转轴 → 转管」
 #   · 自动机炮：原「自动机枪 / 自动炮」，口径规则「≥20mm 为炮、<20mm 为枪」
 #   · 内置机炮：原「内置火炮」，同一组 UI 标签（Internal Gun / Internal guns）应一致
+#   · 舰名逐条中文化：Cursor Class -> 光标级、Argus Class -> 阿尔戈斯级（注：「X 级」不留空格）
 RETIRED_TERMS = {
     "箔条弹": "干扰弹",
     "热诱弹": "干扰弹",
@@ -41,6 +42,7 @@ RETIRED_TERMS = {
     "自动机枪": "自动机炮",
     "内置火炮": "内置机炮",
     "Cursor 级": "光标级",
+    "Argus 级": "阿尔戈斯级",
 }
 
 problems = []
