@@ -12,29 +12,23 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
     ///
     /// <para><b>背景（IL 实证，见 tools/_il_ws*_20260927.py）：</b>
     /// <c>WeaponSelector.dropdown</c> 是标准的 <see cref="TMP_Dropdown"/>，
-    /// <c>PopulateOptions</c> 只负责 <c>options.Add(new OptionData(名))</c>，
-    /// 弹出列表的宽度完全由预制体里的模板写死，代码层从不调整。
-    /// 中文武器名（如「1200kg 副油箱」「AGM-84H 斯拉姆-ER」）比英文原串占宽更省
-    /// 却仍超模板宽时，TMP 溢出裁剪直接把字切掉。</para>
+    /// <c>PopulateOptions</c> 只负责 <c>options.Add(new OptionData(名))</c>。
+    /// 中文武器名（如「AGM-84H 斯拉姆-ER」）在弹出列表里被 TMP 溢出裁剪截断。</para>
     ///
-    /// <para><b>修法 = 改模板几何，不动 TMP 内部：</b>本机 Unity.TextMeshPro.dll 的
-    /// <c>TMP_Dropdown.Show()</c> 逐指令确认了两件事：
-    /// <list type="number">
-    /// <item>弹出列表是模板的克隆，列表宽度 = 模板宽度；内容高度由 Show 自己算，
-    ///       宽度从不被改写。所以只要把模板加宽，每次展开都是宽的。</item>
-    /// <item>Show 里有 <c>GetWorldCorners</c> + 画布越界检测 +
-    ///       <c>FlipLayoutOnAxis</c>，列表超出屏幕右缘时 TMP 会自己翻转展开方向，
-    ///       <b>不需要</b>我们再做屏幕钳制。</item>
-    /// </list></para>
+    /// <para><b>关键实测（v4/v5 诊断日志）：</b>模板根 296px / 模板标签 262px，
+    /// 但弹出列表实际只有 137px、条目标签实际 103px —— <b>模板几何并不传导到
+    /// 弹出列表</b>（游戏预制体的 Viewport/Content 固定宽，且 Show 只改 sizeDelta
+    /// 的 y 分量）。所以<strong>在模板上加宽是无效的</strong>，必须
+    /// <see cref="PylonDropdownShowDiagnostics"/> 那样在 Show 之后对实际弹出的
+    /// 列表动手。本类只负责：登记实例、修模板滚动条方向（会被克隆进弹出列表）、
+    /// 输出量测侧诊断。</para>
     ///
     /// <para><b>滚动条反向（游戏预制体 bug）：</b>这一版 TMP 的 Show 完全不触碰滚动条
     /// （没有旧版的 m_ListScrollbar 逻辑），条目由 Show 统一按「0 号在最上」重排，
     /// 所以正确的滚动条方向恒为 <see cref="Scrollbar.Direction.BottomToTop"/>
     /// （1 = 在顶端 = 看着列表顶）。游戏模板若是 TopToBottom，拖动与位置就整组反向。
-    /// 这里直接把模板上的竖向滚动条规范化为 BottomToTop——本来就是的话零影响。</para>
-    ///
-    /// <para><b>幂等：</b>加宽量 = 当前标签宽与实测需求宽之差，模板只会被加宽到刚好够；
-    /// 重复 PopulateOptions 时第二次差值 ≈ 0，不会滚雪球。</para>
+    /// 这里直接把模板上的竖向滚动条规范化为 BottomToTop——本来就是的话零影响。
+    /// 实机已验证有效。</para>
     /// </summary>
     [HarmonyPatch]
     internal static class PylonDropdownPatches
@@ -42,9 +36,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// <summary>配置开关（启动时由 ModSettings 接线）。</summary>
         internal static bool Enabled = true;
 
-        private const float MinDelta = 1f;    // 差值小于 1px 不动，避免浮点噪声反复加宽
-        private const float MaxTemplateWidth = 800f; // 保险上限，防病态长串把列表撑满全屏
-        private const float ExtraPadding = 8f;       // 文字与边缘之间的呼吸空间
+        internal const float MinDelta = 1f;   // 差值小于 1px 不动，避免浮点噪声反复加宽
+        internal const float MaxTemplateWidth = 800f; // 保险上限，防病态长串把列表撑满全屏
+        internal const float ExtraPadding = 8f;       // 文字与边缘之间的呼吸空间
 
         private static FieldInfo _dropdownField;
         internal static readonly HashSet<TMP_Dropdown> _tracked = new HashSet<TMP_Dropdown>();
@@ -74,40 +68,16 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             try
             {
                 var dd = _dropdownField.GetValue(__instance) as TMP_Dropdown;
-                if (dd == null) return;
-                RectTransform template = dd.template;
-                if (template == null) return;
-                TMP_Text itemText = dd.itemText;
-                if (itemText == null) return;
+                if (dd == null || dd.template == null || dd.itemText == null) return;
 
-                FixScrollbarDirection(template);
-
-                float templateW = template.rect.width;
-                float labelW = itemText.rectTransform.rect.width;
-                float maxPref = MeasureMaxOptionWidth(itemText, dd.options);
+                FixScrollbarDirection(dd.template);
 
                 _tracked.Add(dd);
                 Diagnostics.Log.Info(string.Format(
-                    "[挂架下拉·量测] 模板 {0:F0}px，标签 {1:F0}px，最长译文 {2:F0}px；标签字号 {3:F1}，自适应 {4}（{5:F0}~{6:F0}），字体 {7}，溢出 {8}，层级 {9}",
-                    templateW, labelW, maxPref,
-                    itemText.fontSize, itemText.enableAutoSizing, itemText.fontSizeMin, itemText.fontSizeMax,
-                    itemText.font != null ? itemText.font.name : "null",
-                    itemText.overflowMode, PathOf(itemText.transform, template)));
-
-                float delta = maxPref + ExtraPadding - labelW;
-                if (delta >= MinDelta && templateW + delta <= MaxTemplateWidth)
-                {
-                    ApplyWidth(template, itemText, delta);
-                    Diagnostics.Log.Info(string.Format(
-                        "[挂架下拉] 已加宽 +{0:F0}px：模板 {1:F0}->{2:F0}px，标签 {3:F0}px，最长译文 {4:F0}px",
-                        delta, templateW, templateW + delta, labelW, maxPref));
-                }
-                else
-                {
-                    Diagnostics.Log.Info(string.Format(
-                        "[挂架下拉] 未加宽：模板 {0:F0}px，标签 {1:F0}px，最长译文 {2:F0}px，需差 {3:F0}px（负=装得下）",
-                        templateW, labelW, maxPref, maxPref + ExtraPadding - labelW));
-                }
+                    "[挂架下拉·量测] 模板 {0:F0}px，标签 {1:F0}px，最长译文 {2:F0}px（按自适应上限字号），层级 {3}",
+                    dd.template.rect.width, dd.itemText.rectTransform.rect.width,
+                    MeasureMaxOptionWidth(dd),
+                    PathOf(dd.itemText.transform, dd.template)));
             }
             catch (System.Exception ex)
             {
@@ -116,48 +86,45 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             }
         }
 
-        /// <summary>量出所有选项译文里最宽的那条首选宽（用模板 item 标签的字体设置）。</summary>
-        private static float MeasureMaxOptionWidth(TMP_Text itemText, IReadOnlyList<TMP_Dropdown.OptionData> options)
+        /// <summary>
+        /// 量出所有选项译文里最宽的那条首选宽。
+        /// 标签开了自适应（实测 16~20）时按 <c>fontSizeMax</c> 探测 —— 加宽后 TMP 会
+        /// 把字号涨到上限，按当前字号量会偏小。
+        /// </summary>
+        internal static float MeasureMaxOptionWidth(TMP_Dropdown dd)
         {
-            if (options == null || options.Count == 0) return 0f;
+            TMP_Text label = dd.itemText;
+            if (label == null || dd.options == null || dd.options.Count == 0) return 0f;
 
             // 这一版 TMP 里 GetPreferredWidth 两个重载都是 protected，公共入口是
             // GetPreferredValues(string)（返回宽高向量，纯布局演算，不写 m_text）。
             // 选项原始串是英文；实际显示的是译文，量之前先过一遍自家翻译管线。
-            float maxPref = 0f;
-            for (int i = 0; i < options.Count; i++)
+            float saved = label.fontSize;
+            float probe = label.enableAutoSizing ? label.fontSizeMax : label.fontSize;
+            float max = 0f;
+            try
             {
-                string raw = options[i] != null ? options[i].text : null;
-                if (string.IsNullOrEmpty(raw)) continue;
+                label.fontSize = probe;
+                for (int i = 0; i < dd.options.Count; i++)
+                {
+                    var opt = dd.options[i];
+                    if (opt == null || string.IsNullOrEmpty(opt.text)) continue;
 
-                string shown = PatchHelpers.TryLocalize(raw, itemText, out string translated)
-                    ? translated : raw;
+                    string shown = PatchHelpers.TryLocalize(opt.text, label, out string translated)
+                        ? translated : opt.text;
 
-                float w = itemText.GetPreferredValues(shown).x;
-                if (w > maxPref) maxPref = w;
+                    float w = label.GetPreferredValues(shown).x;
+                    if (w > max) max = w;
+                }
             }
-            return maxPref;
+            finally
+            {
+                label.fontSize = saved;
+            }
+            return max;
         }
 
-        /// <summary>模板加宽 delta，并沿 itemText→模板的祖先链补宽所有非拉伸锚节点。</summary>
-        private static void ApplyWidth(RectTransform template, TMP_Text itemText, float delta)
-        {
-            template.sizeDelta += new Vector2(delta, 0f);
-
-            // 祖先链兜底：不假设模板子节点叫什么名字（游戏预制体未必是 TMP 标准层级）。
-            // 拉伸锚的节点随父变宽，天然跳过；固定宽的中间层（视口/内容/行）逐个补上增量。
-            Transform t = itemText.transform;
-            while (t != null && !(t is RectTransform rt && rt == template))
-            {
-                StretchChild(t as RectTransform, delta);
-                t = t.parent;
-            }
-
-            // 选中高亮背景是 item 标签的兄弟节点，不在祖先链上，按名字补一遍。
-            StretchChild(FindByPath(template, "Viewport/Content/Item/Item Background"), delta);
-        }
-
-        /// <summary>模板上的竖向滚动条规范化为 BottomToTop（见类注释第 3 点）。</summary>
+        /// <summary>模板上的竖向滚动条规范化为 BottomToTop（见类注释）。</summary>
         private static void FixScrollbarDirection(RectTransform template)
         {
             Scrollbar bar = template.GetComponentInChildren<Scrollbar>(true);
@@ -167,21 +134,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             bar.direction = Scrollbar.Direction.BottomToTop; // 属性 setter 会重映射当前取值
         }
 
-        /// <summary>横向拉伸锚的节点随父变宽，跳过；固定宽的节点补上增量。</summary>
-        private static void StretchChild(RectTransform rt, float delta)
-        {
-            if (rt == null) return;
-            if (rt.anchorMax.x - rt.anchorMin.x > 0.5f) return; // 拉伸锚，继承父宽
-            rt.sizeDelta += new Vector2(delta, 0f);
-        }
-
-        private static RectTransform FindByPath(RectTransform root, string path)
-        {
-            Transform t = root.Find(path);
-            return t as RectTransform;
-        }
-
-        /// <summary>诊断用：从 root 到 node 的层级路径。</summary>
+        /// <summary>诊断用：从 node 到 root 的层级路径。</summary>
         private static string PathOf(Transform startNode, Transform root)
         {
             var sb = new System.Text.StringBuilder();
@@ -197,14 +150,23 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
     }
 
     /// <summary>
-    /// 诊断用（独立补丁类，v4）：挂架下拉 <c>TMP_Dropdown.Show</c> 展开后取渲染真相。
+    /// 挂架下拉弹出列表的加宽（v5，治本版）：在 <see cref="TMP_Dropdown.Show"/> 之后
+    /// 对<strong>实际弹出的列表</strong>动手。
     ///
-    /// <para><b>为什么必须是独立的类：</b>Harmony 对含 <c>TargetMethods</c> 的补丁类，
-    /// 会把类内<b>所有</b>补丁方法套到每个目标上。v3 曾把声明 <c>TMP_Dropdown __instance</c>
-    /// 参数的 Show postfix 和 <c>WeaponSelector.PopulateOptions</c> 的 TargetMethods
-    /// 放在同一类里 —— __instance 类型对不上，安装时直接抛 Patching exception，
-    /// <b>整个类（含滚动条修复与加宽）都没装上</b>，实机表现为「滚动条又反了 + 不加宽」。
-    /// 参数类型兼容的补丁方法才允许与 TargetMethods 同类。</para>
+    /// <para><b>为什么必须是 Show 之后 + 独立补丁类：</b></para>
+    /// <list type="number">
+    /// <item>实测模板几何不传导到弹出列表（模板根 296px，弹出根 137px），
+    ///       只有弹出列表自己的 rect 才是渲染真相；</item>
+    /// <item>Harmony 对含 <c>TargetMethods</c> 的补丁类，会把类内所有补丁方法套到
+    ///       每个目标上 —— v4 曾因 <c>__instance</c> 类型不兼容导致整类安装失败
+    ///       （滚动条修复一起失效），所以 TargetMethods 与按方法标注的补丁必须分家。</item>
+    /// </list>
+    ///
+    /// <para><b>做法：</b>沿「弹出条目标签 → 列表顶层（父为 dropdown 自身/Canvas 为止）」
+    /// 的祖先链，把所有非拉伸锚 rect 一并加宽（拉伸锚自动随父变宽）；
+    /// 选中高亮背景（Item Background）不在祖先链上，按名补一遍；最后把列表钳回
+    /// 画布范围内（TMP 的翻转逻辑已处理展开方向，这里只兜底越界）。
+    /// 弹出列表每次 Show 都从模板重建，天然幂等。</para>
     /// </summary>
     [HarmonyPatch(typeof(TMP_Dropdown), "Show")]
     internal static class PylonDropdownShowDiagnostics
@@ -223,31 +185,114 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 object popupObj = _popupField?.GetValue(__instance);
                 GameObject popup = popupObj as GameObject ?? (popupObj as Component)?.gameObject;
                 if (popup == null) return;
+                RectTransform popupRt = popup.transform as RectTransform;
+                if (popupRt == null) return;
 
-                RectTransform rt = popup.transform as RectTransform;
-                float popupW = rt != null ? rt.rect.width : -1f;
-
+                // ---- 渲染侧诊断（保留：下轮若仍异常，两行日志对比可定位） ----
+                TMP_Text firstLabel = null;
+                string labelName = __instance.itemText != null ? __instance.itemText.name : "Item Label";
                 TMP_Text[] texts = popup.GetComponentsInChildren<TMP_Text>(false);
+                foreach (TMP_Text t in texts)
+                {
+                    if (t != null && t.name == labelName) { firstLabel = t; break; }
+                }
+                if (firstLabel == null) return;
+
                 var sb = new System.Text.StringBuilder();
-                sb.AppendFormat("[挂架下拉·Show] 列表宽 {0:F0}px，条目文本组件 {1} 个", popupW, texts.Length);
+                sb.AppendFormat("[挂架下拉·Show] 列表 {0:F0}px，标签 {1:F0}px，条目文本 {2} 个",
+                    popupRt.rect.width, firstLabel.rectTransform.rect.width, texts.Length);
                 int shown = 0;
                 for (int i = 0; i < texts.Length && shown < 3; i++)
                 {
                     TMP_Text t = texts[i];
-                    string s = t.text;
-                    if (string.IsNullOrEmpty(s)) continue;
-                    float pref = t.GetPreferredValues(s).x;
-                    sb.AppendFormat(" | #{0} \"{1}\" 字号{2:F1} 自适应{3} 宽{4:F0} 量测{5:F0} 字体{6}",
-                        shown, s, t.fontSize, t.enableAutoSizing, t.rectTransform.rect.width, pref,
+                    if (string.IsNullOrEmpty(t.text)) continue;
+                    sb.AppendFormat(" | #{0} \"{1}\" 字号{2:F1} 自适应{3} 字体{4}",
+                        shown, t.text, t.fontSize, t.enableAutoSizing,
                         t.font != null ? t.font.name : "null");
                     shown++;
                 }
                 Diagnostics.Log.Info(sb.ToString());
+
+                // ---- 加宽（按选项译文实测，探针字号 = 自适应上限） ----
+                float required = PylonDropdownPatches.MeasureMaxOptionWidth(__instance)
+                    + PylonDropdownPatches.ExtraPadding;
+                float labelW = firstLabel.rectTransform.rect.width;
+                float delta = required - labelW;
+                if (delta < PylonDropdownPatches.MinDelta) return;
+                if (popupRt.rect.width + delta > PylonDropdownPatches.MaxTemplateWidth)
+                    delta = PylonDropdownPatches.MaxTemplateWidth - popupRt.rect.width;
+                if (delta < PylonDropdownPatches.MinDelta) return;
+
+                // 祖先链：标签 → 列表顶层。顶层判定：父节点是 dropdown 自身、
+                // 挂着 Canvas 组件、或没有父节点（不引 UnityEngine.UIModule，
+                // 用组件名探测 Canvas）。非拉伸锚的中间层（视口/内容/行）逐个补宽；
+                // 拉伸锚随父变宽自动跳过。
+                Transform top = firstLabel.rectTransform;
+                while (top.parent != null
+                       && top.parent != __instance.transform
+                       && !HasCanvasComponent(top.parent))
+                {
+                    top = top.parent;
+                }
+
+                Transform node = firstLabel.rectTransform;
+                while (node != null && node != top)
+                {
+                    StretchChild(node as RectTransform, delta);
+                    node = node.parent;
+                }
+                StretchChild(top as RectTransform, delta); // 列表根
+
+                // 选中高亮背景是条目标签的兄弟节点，不在祖先链上，按名补一遍。
+                RectTransform item = firstLabel.rectTransform.parent as RectTransform;
+                if (item != null)
+                    StretchChild(item.Find("Item Background") as RectTransform, delta);
+
+                ClampIntoCanvas(top as RectTransform);
+
+                Diagnostics.Log.Info(string.Format(
+                    "[挂架下拉] 已加宽 +{0:F0}px：列表 {1:F0}->{2:F0}px，标签 {3:F0}px，需宽 {4:F0}px",
+                    delta, popupRt.rect.width - delta, popupRt.rect.width, labelW, required));
             }
             catch (System.Exception ex)
             {
-                Diagnostics.Log.Warn("挂架下拉 Show 诊断失败：" + ex.GetType().Name + ": " + ex.Message);
+                Diagnostics.Log.Warn("挂架下拉 Show 修整失败：" + ex.GetType().Name + ": " + ex.Message);
             }
+        }
+
+        /// <summary>横向拉伸锚的节点随父变宽，跳过；固定宽的节点补上增量。</summary>
+        private static void StretchChild(RectTransform rt, float delta)
+        {
+            if (rt == null) return;
+            if (rt.anchorMax.x - rt.anchorMin.x > 0.5f) return; // 拉伸锚，继承父宽
+            rt.sizeDelta += new Vector2(delta, 0f);
+        }
+
+        /// <summary>组件名探测 Canvas（csproj 未引 UnityEngine.UIModule，不能用类型）。</summary>
+        private static bool HasCanvasComponent(Transform t)
+        {
+            foreach (Component comp in t.GetComponents<Component>())
+                if (comp != null && comp.GetType().Name == "Canvas") return true;
+            return false;
+        }
+
+        /// <summary>列表加宽后越出画布时平移回屏内（展开方向由 TMP 的翻转逻辑决定）。</summary>
+        private static void ClampIntoCanvas(RectTransform popupRt)
+        {
+            RectTransform canvasRt = popupRt.parent as RectTransform;
+            if (canvasRt == null) return;
+
+            Vector3[] c = new Vector3[4];
+            Vector3[] cc = new Vector3[4];
+            popupRt.GetWorldCorners(c);
+            canvasRt.GetWorldCorners(cc);
+
+            float overflowR = c[2].x - cc[2].x;
+            float overflowL = cc[0].x - c[0].x;
+            if (overflowR > 0f)
+                popupRt.position += new Vector3(-overflowR, 0f, 0f);
+            else if (overflowL > 0f)
+                popupRt.position += new Vector3(overflowL, 0f, 0f);
         }
     }
 }
