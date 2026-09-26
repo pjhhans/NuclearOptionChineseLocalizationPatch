@@ -47,8 +47,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         private const float ExtraPadding = 8f;       // 文字与边缘之间的呼吸空间
 
         private static FieldInfo _dropdownField;
-        private static FieldInfo _popupField;
-        private static readonly HashSet<TMP_Dropdown> _tracked = new HashSet<TMP_Dropdown>();
+        internal static readonly HashSet<TMP_Dropdown> _tracked = new HashSet<TMP_Dropdown>();
 
         /// <summary>
         /// 目标 = WeaponSelector.PopulateOptions 的全部重载。
@@ -65,50 +64,6 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             foreach (MethodInfo m in AccessTools.GetDeclaredMethods(type))
                 if (m.Name == "PopulateOptions") yield return m;
-        }
-
-        /// <summary>
-        /// 诊断用：Show 展开弹出列表后取渲染真相（列表宽、条目文字的实测宽度/字号）。
-        /// 只对挂架下拉生效（_tracked 里登记过的实例）。
-        /// </summary>
-        [HarmonyPatch(typeof(TMP_Dropdown), "Show")]
-        [HarmonyPostfix]
-        internal static void ShowPostfix(TMP_Dropdown __instance)
-        {
-            if (!Enabled || !_tracked.Contains(__instance)) return;
-
-            try
-            {
-                if (_popupField == null)
-                    _popupField = AccessTools.Field(typeof(TMP_Dropdown), "m_Dropdown");
-                object popupObj = _popupField?.GetValue(__instance);
-                GameObject popup = popupObj as GameObject ?? (popupObj as Component)?.gameObject;
-                if (popup == null) return;
-
-                RectTransform rt = popup.transform as RectTransform;
-                float popupW = rt != null ? rt.rect.width : -1f;
-
-                TMP_Text[] texts = popup.GetComponentsInChildren<TMP_Text>(false);
-                var sb = new System.Text.StringBuilder();
-                sb.AppendFormat("[挂架下拉·Show] 列表宽 {0:F0}px，条目文本组件 {1} 个", popupW, texts.Length);
-                int shown = 0;
-                for (int i = 0; i < texts.Length && shown < 3; i++)
-                {
-                    TMP_Text t = texts[i];
-                    string s = t.text;
-                    if (string.IsNullOrEmpty(s)) continue;
-                    float pref = t.GetPreferredValues(s).x;
-                    sb.AppendFormat(" | #{0} \"{1}\" 字号{2:F1} 自适应{3} 宽{4:F0} 量测{5:F0} 字体{6}",
-                        shown, s, t.fontSize, t.enableAutoSizing, t.rectTransform.rect.width, pref,
-                        t.font != null ? t.font.name : "null");
-                    shown++;
-                }
-                Diagnostics.Log.Info(sb.ToString());
-            }
-            catch (System.Exception ex)
-            {
-                Diagnostics.Log.Warn("挂架下拉 Show 诊断失败：" + ex.GetType().Name + ": " + ex.Message);
-            }
         }
 
         [HarmonyPostfix]
@@ -238,6 +193,61 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 cur = cur.parent;
             }
             return sb.ToString();
+        }
+    }
+
+    /// <summary>
+    /// 诊断用（独立补丁类，v4）：挂架下拉 <c>TMP_Dropdown.Show</c> 展开后取渲染真相。
+    ///
+    /// <para><b>为什么必须是独立的类：</b>Harmony 对含 <c>TargetMethods</c> 的补丁类，
+    /// 会把类内<b>所有</b>补丁方法套到每个目标上。v3 曾把声明 <c>TMP_Dropdown __instance</c>
+    /// 参数的 Show postfix 和 <c>WeaponSelector.PopulateOptions</c> 的 TargetMethods
+    /// 放在同一类里 —— __instance 类型对不上，安装时直接抛 Patching exception，
+    /// <b>整个类（含滚动条修复与加宽）都没装上</b>，实机表现为「滚动条又反了 + 不加宽」。
+    /// 参数类型兼容的补丁方法才允许与 TargetMethods 同类。</para>
+    /// </summary>
+    [HarmonyPatch(typeof(TMP_Dropdown), "Show")]
+    internal static class PylonDropdownShowDiagnostics
+    {
+        private static FieldInfo _popupField;
+
+        [HarmonyPostfix]
+        internal static void Postfix(TMP_Dropdown __instance)
+        {
+            if (!PylonDropdownPatches.Enabled || !PylonDropdownPatches._tracked.Contains(__instance)) return;
+
+            try
+            {
+                if (_popupField == null)
+                    _popupField = AccessTools.Field(typeof(TMP_Dropdown), "m_Dropdown");
+                object popupObj = _popupField?.GetValue(__instance);
+                GameObject popup = popupObj as GameObject ?? (popupObj as Component)?.gameObject;
+                if (popup == null) return;
+
+                RectTransform rt = popup.transform as RectTransform;
+                float popupW = rt != null ? rt.rect.width : -1f;
+
+                TMP_Text[] texts = popup.GetComponentsInChildren<TMP_Text>(false);
+                var sb = new System.Text.StringBuilder();
+                sb.AppendFormat("[挂架下拉·Show] 列表宽 {0:F0}px，条目文本组件 {1} 个", popupW, texts.Length);
+                int shown = 0;
+                for (int i = 0; i < texts.Length && shown < 3; i++)
+                {
+                    TMP_Text t = texts[i];
+                    string s = t.text;
+                    if (string.IsNullOrEmpty(s)) continue;
+                    float pref = t.GetPreferredValues(s).x;
+                    sb.AppendFormat(" | #{0} \"{1}\" 字号{2:F1} 自适应{3} 宽{4:F0} 量测{5:F0} 字体{6}",
+                        shown, s, t.fontSize, t.enableAutoSizing, t.rectTransform.rect.width, pref,
+                        t.font != null ? t.font.name : "null");
+                    shown++;
+                }
+                Diagnostics.Log.Info(sb.ToString());
+            }
+            catch (System.Exception ex)
+            {
+                Diagnostics.Log.Warn("挂架下拉 Show 诊断失败：" + ex.GetType().Name + ": " + ex.Message);
+            }
         }
     }
 }
