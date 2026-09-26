@@ -10,6 +10,7 @@
   5. 同原文多译文                         —— 同一段英文在表里只应有一个译文
   6. 片段键长度非空                       —— 空的片段键会匹配一切
   7. 键严格按码点升序、且无字面重复键     —— 保证「批量补词条」永远是干净的最小 diff
+  8. 已裁决废弃的译法不得回流             —— 口径统一后靠这一条守住（见 RETIRED_TERMS）
 
 用法:
     python tools/check_data.py [数据目录]
@@ -27,6 +28,20 @@ DEFAULT_DATA = os.path.join(os.path.dirname(HERE), "data")
 
 SCOPE_RE = re.compile(r"^\[[^\]]{1,40}\]")
 TAG_RE = re.compile(r"<[^>]*>")
+
+# 已裁决废弃的译法 → 现行口径。改词表时若把旧写法带回来，这里会直接报错。
+#   · 干扰弹：chaff(箔条弹) 与 flare(热诱弹) 统一 —— 游戏里这类对抗措施只对红外弹有效
+#   · 转管炮：原「转轴炮台」，用户裁决「转轴 → 转管」
+#   · 自动机炮：原「自动机枪 / 自动炮」，口径规则「≥20mm 为炮、<20mm 为枪」
+#   · 内置机炮：原「内置火炮」，同一组 UI 标签（Internal Gun / Internal guns）应一致
+RETIRED_TERMS = {
+    "箔条弹": "干扰弹",
+    "热诱弹": "干扰弹",
+    "转轴炮": "转管炮",
+    "自动机枪": "自动机炮",
+    "内置火炮": "内置机炮",
+    "Cursor 级": "光标级",
+}
 
 problems = []
 notes = []
@@ -140,6 +155,24 @@ def check_same_text(table):
             notes.append("    %r -> %r" % (norm[:50], sorted(values)))
 
 
+def check_retired_terms(table):
+    """口径统一之后，旧的译法不许再被写回来。
+
+    注意「转轴炮」而不是「转轴」：`Roll Axis -> 滚转轴` 是合法译文。
+    """
+    hits = collections.Counter()
+    for key, value in table.items():
+        if not isinstance(value, str):
+            continue
+        for old in RETIRED_TERMS:
+            if old in value:
+                hits[old] += 1
+                fail("译文里出现已废弃的译法 %r（现行 %r）: %r -> %r"
+                     % (old, RETIRED_TERMS[old], key[:50], value[:70]))
+    if not hits:
+        notes.append("废弃译法扫描：%d 项口径均无回流" % len(RETIRED_TERMS))
+
+
 def main():
     data_dir = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DATA
 
@@ -160,6 +193,7 @@ def main():
     check_case_duplicates(table)
     check_brackets(table)
     check_same_text(table)
+    check_retired_terms(table)
 
     for note in notes:
         print("提示: " + note)
