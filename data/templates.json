@@ -1,6 +1,7 @@
 {
   "~\u0001Fuel leak detected; unable to refuel\u0001": "<b>检测到燃油泄漏，无法加油</b>",
   "~A single trigger pull \u0001 will release one munition per designated target.\nShoot when TGT is within MIN and MAX on the range indicator.\nAll your current weapons are fire and forget.": "单次扣动扳机 \u0001 会为每个已指定目标释放一枚弹药。\n当 目标 位于测距指示条的 最近 与 最远 之间时开火。\n你当前所有武器都是发射后不管。",
+  "~A symmetrical battle between two carrier groups. With no aircraft production, each side is limited to the inventory of their carrier, plus any additional airframes made available from kill rewards. All carrier aircraft are available at start.\n\nCarrier inventory consists of:\n24 x KR-67 Ifrit\n8 x T/A-30 Compass\n4 x SAH-46 Chicane\n2 x CI-22 Cricket\n4 x EW-25 Medusa": "两个航母战斗群之间的对称对决。由于没有飞机制造能力，双方都只能依靠自身航母的库存，外加通过击杀奖励获得的额外机体。所有舰载机在开局时即可使用。\n\n航母库存包括:\n24 x KR-67 伊夫利特\n8 x T/A-30 罗盘\n4 x SAH-46 西肯\n2 x CI-22 蟋蟀\n4 x EW-25 美杜莎",
   "~Aerial Targets 1/2": "空中目标 1/2",
   "~Aerial Targets 2/2": "空中目标 2/2",
   "~All Guns \u0001Linked\u0001": "全部机炮 <b>已连接</b>",
