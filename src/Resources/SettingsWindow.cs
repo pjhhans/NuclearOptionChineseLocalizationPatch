@@ -52,6 +52,7 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
         // 所以每帧第一次进入时取一份快照，之后整个帧只读这份快照，条数恒定。
         private static long _snapshotFrame = -1;
         private static long _hitTotal;
+        private static bool _hitRecording;
         private static long _missTotal;
         private static string[] _hitLines = new string[0];
         private static string[] _missLines = new string[0];
@@ -66,6 +67,7 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
             TextLocalizer localizer = LocalizationPlugin.Localizer;
             _hitLines = localizer == null ? new string[0] : localizer.SnapshotRecentHits();
             _hitTotal = localizer == null ? 0 : localizer.HitCount;
+            _hitRecording = localizer != null && localizer.CaptureRecent;
 
             MissLog missLog = LocalizationPlugin.MissLog;
             _missLines = missLog == null ? new string[0] : missLog.SnapshotRecent();
@@ -252,7 +254,7 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
             TextLocalizer localizer = LocalizationPlugin.Localizer;
             if (localizer != null)
             {
-                localizer.CaptureRecent = GUILayout.Toggle(localizer.CaptureRecent, " 记录最近命中（诊断区用）");
+                localizer.CaptureRecent = GUILayout.Toggle(localizer.CaptureRecent, " 记录最近命中（默认关；排查时再开）");
             }
 
             MissLog missLog = LocalizationPlugin.MissLog;
@@ -275,7 +277,10 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
             GUILayout.Label($"── 最近命中（原文 → 译文）　累计 {_hitTotal} 条 ──");
             if (_hitLines.Length == 0)
             {
-                GUILayout.Label("　（还没有任何一条文本被翻成中文 —— 若界面上确实有英文，问题在补丁没被执行）");
+                // 两种「空」必须区分：记录关掉时空列表不代表没翻过，否则会把用户引向错误结论。
+                GUILayout.Label(_hitRecording
+                    ? "　（还没有任何一条文本被翻成中文 —— 若界面上确实有英文，问题在补丁没被执行）"
+                    : "　（记录已关闭 —— 勾选上方「记录最近命中」后再复现一次就能看到）");
             }
             else
             {

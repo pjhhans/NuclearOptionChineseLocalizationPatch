@@ -39,8 +39,17 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         internal long HitCount { get; private set; }
         internal int CacheCount => _cache.Count;
 
-        /// <summary>是否记录「最近命中」。关掉可省下窗口诊断区的开销。</summary>
-        internal bool CaptureRecent { get; set; } = true;
+        /// <summary>
+        /// 是否记录「最近命中（原文 → 译文）」滚动列表，供 F11 窗口的诊断区显示。
+        ///
+        /// <para><b>默认关</b>，与本项目「安装后只开翻译」的默认一致：正常游玩用不到它，
+        /// 而每条命中都要做一遍字符串裁剪再入队。排查「某处为什么没翻」时，在 F11 窗口里
+        /// 临时勾上再复现即可。</para>
+        ///
+        /// <para>关掉只影响这份滚动列表；<see cref="HitCount"/> 累计数照常统计，
+        /// 窗口里的「累计 N 条」仍然有效。</para>
+        /// </summary>
+        internal bool CaptureRecent { get; set; } = false;
 
         private const int RecentCapacity = 12;
         private readonly Queue<string[]> _recentHits = new Queue<string[]>(RecentCapacity);

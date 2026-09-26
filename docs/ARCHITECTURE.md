@@ -99,7 +99,7 @@ src/
 │   ├─ TokenPatterns.cs         正则集（数值/单位/型号/句式）
 │   ├─ ExclusionRules.cs        排除判定（§2.3）
 │   ├─ LocalizationTable.cs     词表容器：载入、分类、查询
-│   └─ TextLocalizer.cs         翻译流水线（§4）
+│   └─ TextLocalizer.cs         翻译流水线（§4；「最近命中」记录默认关，累计计数不受影响）
 ├─ Patching/
 │   ├─ TmpPatches.cs            TMP_Text 系列补丁
 │   ├─ LegacyUiPatches.cs       UnityEngine.UI.Text 补丁

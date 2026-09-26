@@ -88,9 +88,10 @@ namespace NuclearOptionChineseLocalizationPatch
             Log.Info($"{PluginName} v{PluginVersion} 已启动。{PluginPaths.Describe()}");
             Log.Info($"按 {Settings.ToggleWindowHotkey.Value} 打开设置与诊断窗口。");
             Log.Info($"诊断状态：漏译记录 {(MissLog.Recording ? "开（写 missing.json / untranslated.json）" : "关")}"
+                     + $"，最近命中 {(Localizer != null && Localizer.CaptureRecent ? "开" : "关")}"
                      + $"，兜底扫描 {(SettingsWindow.ScanEnabled ? "开" : "关")}"
                      + $"，调试日志 {(Log.Verbose ? "开" : "关")}"
-                     + "。（默认只开翻译，需要时报漏翻前请在 F11 窗口里打开「累积漏译」）");
+                     + "。（默认只开翻译；需要报漏翻时请在 F11 窗口里打开「累积漏译」）");
         }
 
         private static float ClampInterval(float seconds)
