@@ -15,7 +15,10 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>NuclearOptionChineseLocalizationPatch</AssemblyName>
     <Product>Nuclear Option Chinese Localization Patch</Product>
-    <Version>1.0.0</Version>
+    <!-- 版本号：必须与 src/LocalizationPlugin.cs 的 PluginVersion 一致，也是发布 tag 与
+         发布包文件名的来源（tools/make_release_zip.py 会断言三处一致）。
+         两者的用途不同：这个值进程序集元数据，PluginVersion 进 [BepInPlugin] 供 BepInEx 显示。 -->
+    <Version>1.5.5</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RestoreAdditionalProjectSources>
