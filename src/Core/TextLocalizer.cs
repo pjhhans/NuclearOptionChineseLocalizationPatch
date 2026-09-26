@@ -555,6 +555,15 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 return ReplacePrefix(text, wn.Groups[1].Value.Trim(), scope);
             }
 
+            // 型号 + 数量（`RAM-45 5`）。放在 WordPlusNumber 之后：纯字母的词
+            // 已经由上一条认领，这里只捞带连字符/斜杠/数字的型号。
+            Match mc = TokenPatterns.ModelPlusCount.Match(text);
+            if (mc.Success)
+            {
+                handled = true;
+                return ReplacePrefix(text, mc.Groups[1].Value.Trim(), scope);
+            }
+
             Match nu = TokenPatterns.NumberUnitOnly.Match(text);
             if (nu.Success)
             {
@@ -602,6 +611,14 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             // 排除判定只作用于整条文本，尾缀模式剥出来的前缀是**新字符串**，
             // 不在这里补判的话，名单条目会被当成漏译反复记下来。
             if (_exclusions.IsExcluded(prefix, scope)) return text;
+
+            // ★ 术语（kept term）同样不记漏译。少了这一句，「AT-145 x2」「AGM-99 (HE)」
+            //   这类「术语 + 尾缀」会走 VersionSuffix / ValueUnitSuffix / QuantitySuffix
+            //   剥出前缀 `AT-145`、`AGM-99`，然后被记成漏译 —— 表现为
+            //   「清单里永远是这几个缩写，补不掉也翻不出」，而它们本来就是要保持英文的。
+            //   （pieces 路径早就判了术语，见 SliceAndRebuild；这里是对称补漏。）
+            if (_exclusions.IsKeptTerm(prefix)) return text;
+
             string scoped = string.IsNullOrEmpty(scope) ? null : _table.LookupScoped(scope, prefix);
             string trans = scoped ?? _table.LookupGlobal(prefix);
             if (trans != null) return text.Replace(prefix, trans);

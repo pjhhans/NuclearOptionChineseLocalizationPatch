@@ -90,6 +90,19 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             @"^([a-zA-Z\s]+)\s+([+-]?\d+(?:\.\d+)?)$",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        /// <summary>
+        /// <c>RAM-45 5</c> / <c>AGM-68 x2</c> 之类「型号 + 数量」。
+        ///
+        /// <para>为什么要单独一条：型号里带连字符与数字（<c>RAM-45</c>、<c>T/A-30</c>），
+        /// 而 <see cref="WordPlusNumber"/> 的词部只允许字母与空白，于是整条落不进任何模式，
+        /// 最后被记成一条永远补不掉的漏译（补 `RAM-45 5` 会把数量锁死在键里，
+        /// 而数量随挂载变化）。剥出型号后交给 <c>ReplacePrefix</c>：
+        /// 型号若是 identity（`RAM-45` → `RAM-45`），译文与原文相同 ⇒ 不算漏译。</para>
+        /// </summary>
+        internal static readonly Regex ModelPlusCount = new Regex(
+            @"^([a-zA-Z][a-zA-Z0-9\-/\.\s]*?)\s+(\d+)$",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         /// <summary><c>12 kJ</c> —— 只有数值 + 单位，翻单位。</summary>
         internal static readonly Regex NumberUnitOnly = new Regex(
             @"^(\d*[\d.]+)\s*([a-zA-Z/°%]+)$",
