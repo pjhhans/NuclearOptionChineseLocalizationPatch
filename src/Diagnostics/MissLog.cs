@@ -39,8 +39,15 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
         internal int FragmentCount => _fragments.Count;
         internal int LongTextCount => _longTexts.Count;
 
-        /// <summary>是否记录。关掉后不再累积、也不写盘。</summary>
-        internal bool Recording { get; set; } = true;
+        /// <summary>
+        /// 是否记录。关掉后不再累积、也不写盘。
+        ///
+        /// <para><b>默认关闭</b>（启动时由配置 <c>LogMisses</c> 覆盖）。理由：运行期清单里必然混入
+        /// 第三方文本（创意工坊物件名、玩家呼号、涂装名），噪声远多于真缺口；且写盘是常驻开销。
+        /// 注意「最近漏译」的**内存环形缓冲**不受此开关影响（<see cref="Record"/> 里先入队再判），
+        /// 所以关掉它只是不落盘，F11 窗口依然能看到最近 12 条。</para>
+        /// </summary>
+        internal bool Recording { get; set; } = false;
 
         private const int RecentCapacity = 12;
         private readonly Queue<string> _recent = new Queue<string>(RecentCapacity);

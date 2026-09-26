@@ -27,7 +27,7 @@ namespace NuclearOptionChineseLocalizationPatch
     {
         internal const string Guid = "com.nuclearoption.zhcn.localization";
         internal const string PluginName = "Nuclear Option Chinese Localization Patch";
-        internal const string PluginVersion = "1.5.4";
+        internal const string PluginVersion = "1.5.5";
 
         // ------------------------------------------------------------------
         // 数据一律挂在静态属性上。
@@ -87,6 +87,10 @@ namespace NuclearOptionChineseLocalizationPatch
 
             Log.Info($"{PluginName} v{PluginVersion} 已启动。{PluginPaths.Describe()}");
             Log.Info($"按 {Settings.ToggleWindowHotkey.Value} 打开设置与诊断窗口。");
+            Log.Info($"诊断状态：漏译记录 {(MissLog.Recording ? "开（写 missing.json / untranslated.json）" : "关")}"
+                     + $"，兜底扫描 {(SettingsWindow.ScanEnabled ? "开" : "关")}"
+                     + $"，调试日志 {(Log.Verbose ? "开" : "关")}"
+                     + "。（默认只开翻译，需要时报漏翻前请在 F11 窗口里打开「累积漏译」）");
         }
 
         private static float ClampInterval(float seconds)

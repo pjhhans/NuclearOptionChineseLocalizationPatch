@@ -258,7 +258,7 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
             MissLog missLog = LocalizationPlugin.MissLog;
             if (missLog != null)
             {
-                bool recording = GUILayout.Toggle(missLog.Recording, " 累积漏译到 missing.json / untranslated.json");
+                bool recording = GUILayout.Toggle(missLog.Recording, " 累积漏译到 missing.json / untranslated.json（默认关）");
                 missLog.Recording = recording;
             }
 

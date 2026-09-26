@@ -111,7 +111,7 @@ src/
 │   └─ PluginHost.cs            逐帧宿主：热键 / 兜底扫描 / 防回写驱动（§3.1）
 └─ Diagnostics/
     ├─ Log.cs                   日志封装
-    ├─ MissLog.cs               漏译记录
+    ├─ MissLog.cs               漏译记录（默认不落盘；内存环形缓冲始终可用）
     └─ HarmonySelfTest.cs       自打补丁验证 Harmony 是否真生效
 ```
 

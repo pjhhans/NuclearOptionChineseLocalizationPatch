@@ -35,8 +35,11 @@ namespace NuclearOptionChineseLocalizationPatch.Configuration
                 "输出调试级日志。翻译路径在渲染期间被高频调用，日常使用请保持关闭。");
 
             LogMisses = config.Bind(
-                "Diagnostics", "LogMisses", true,
-                "把未翻译的文本累积到 missing.json / untranslated.json，供补词表用。");
+                "Diagnostics", "LogMisses", false,
+                "把未翻译的文本累积到 missing.json / untranslated.json，供补词表用。"
+                + "默认关闭：插件分不清游戏原文与第三方文本（创意工坊物件名、玩家呼号等会被一并记进来），"
+                + "清单噪声很大，且写盘本身是常驻开销。"
+                + "需要向作者报漏翻、或自己补词表时再打开（也可在 F11 窗口里临时勾选）。");
 
             ScanIntervalSeconds = config.Bind(
                 "Performance", "ScanIntervalSeconds", 0f,
