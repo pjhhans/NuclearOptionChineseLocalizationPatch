@@ -33,6 +33,17 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         private readonly Dictionary<string, string> _templates =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// 模板键的**去标签指纹**索引，用于「标签个数与词表键不一致」时的回落匹配。
+        ///
+        /// <para>值为 <c>null</c> 表示该指纹有**两个以上**模板键共用 ⇒ 无法判定是哪一个，
+        /// 整组作废（宁可漏翻也不翻错）。</para>
+        /// </summary>
+        private readonly Dictionary<string, string> _templateFingerprints =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        private int _fingerprintCollisions;
+
         private readonly Dictionary<string, string> _reverse =
             new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -50,6 +61,16 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
         internal int GlobalCount => _global.Count;
         internal int TemplateCount => _templates.Count;
+        /// <summary>可用的去标签指纹条数（撞车作废的不计）。</summary>
+        internal int TemplateFingerprintCount
+        {
+            get
+            {
+                int n = 0;
+                foreach (string v in _templateFingerprints.Values) if (v != null) n++;
+                return n;
+            }
+        }
         internal int FragmentCount =>
             _prefixFragments.Count + _suffixFragments.Count + _infixFragments.Count;
         internal int ScopeCount => _scoped.Count;
@@ -80,6 +101,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             }
 
             _global.Clear(); _templates.Clear(); _reverse.Clear();
+            _templateFingerprints.Clear(); _fingerprintCollisions = 0;
             _prefixFragments.Clear(); _suffixFragments.Clear(); _infixFragments.Clear();
             _scoped.Clear(); _forceScoped.Clear();
             _minTemplateKeyLength = int.MaxValue;
@@ -108,6 +130,22 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     if (canonical.Length == 0) continue;
                     _templates[canonical] = value;
                     if (canonical.Length < _minTemplateKeyLength) _minTemplateKeyLength = canonical.Length;
+
+                    // 顺带建指纹索引。撞车（两个键去掉标签后一模一样）⇒ 整组置 null 作废：
+                    // 无法判定该用哪一条译文时，宁可让这条回落失效，也不能翻错。
+                    string fingerprint = TextCanonicalizer.Fingerprint(canonical);
+                    if (fingerprint.Length >= TextCanonicalizer.MinFingerprintLength)
+                    {
+                        if (_templateFingerprints.ContainsKey(fingerprint))
+                        {
+                            if (_templateFingerprints[fingerprint] != null) _fingerprintCollisions++;
+                            _templateFingerprints[fingerprint] = null;
+                        }
+                        else
+                        {
+                            _templateFingerprints[fingerprint] = value;
+                        }
+                    }
                 }
                 else if (key.Length > 2 && key[0] == '>' && key[1] == '>')
                 {
@@ -217,6 +255,11 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// <summary>
         /// 整段模板查询。<paramref name="text"/> 会先归一化；
         /// 短于最短模板键长的文本直接判否（门禁）。
+        ///
+        /// <para><b>两步</b>：先逐字符精确匹配；失配则退到<b>去标签指纹</b>匹配 ——
+        /// 教程弹窗的 <c>&lt;bind=X&gt;</c> 会被游戏在写入控件前解析成字形 / 文本 / 空，
+        /// 标签个数因此与词表键不一致。没有这一步的话，那类卡片会整行停留在英文，
+        /// 而且日志干净、只留一条漏译记录（查不出来源）。</para>
         /// </summary>
         internal bool TryGetTemplate(string text, out string value)
         {
@@ -226,8 +269,25 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
             string canonical = TextCanonicalizer.Canonicalize(text);
             if (canonical.Length < _minTemplateKeyLength) return false;
-            return _templates.TryGetValue(canonical, out value) && value != null;
+            if (_templates.TryGetValue(canonical, out value) && value != null) return true;
+
+            // ---- 回落：去标签指纹
+            if (_templateFingerprints.Count == 0) return false;
+            string fingerprint = TextCanonicalizer.Fingerprint(canonical);
+            if (fingerprint.Length >= TextCanonicalizer.MinFingerprintLength
+                && _templateFingerprints.TryGetValue(fingerprint, out value)
+                && value != null)
+            {
+                TemplateFingerprintHits++;
+                return true;
+            }
+
+            value = null;
+            return false;
         }
+
+        /// <summary>指纹回落实际命中次数（诊断用；仅在回落时累加）。</summary>
+        internal int TemplateFingerprintHits;
 
         /// <summary>禁用翻译时用：把已显示的中文反查回原文。</summary>
         internal bool TryReverse(string plainChinese, out string original)

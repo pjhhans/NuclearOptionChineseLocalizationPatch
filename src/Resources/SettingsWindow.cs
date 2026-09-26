@@ -200,7 +200,8 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
             Row("词表", table == null
                 ? "未载入"
-                : $"普通 {table.GlobalCount} ／ 模板 {table.TemplateCount} ／ 片段 {table.FragmentCount} ／ 作用域 {table.ScopeCount}");
+                : $"普通 {table.GlobalCount} ／ 模板 {table.TemplateCount} ／ 片段 {table.FragmentCount} ／ 作用域 {table.ScopeCount}"
+                  + $"　模板指纹 {table.TemplateFingerprintCount}（回落命中 {table.TemplateFingerprintHits}）");
 
             Row("排除名单", exclusions == null
                 ? "未载入"

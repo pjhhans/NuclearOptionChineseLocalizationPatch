@@ -27,7 +27,7 @@ namespace NuclearOptionChineseLocalizationPatch
     {
         internal const string Guid = "com.nuclearoption.zhcn.localization";
         internal const string PluginName = "Nuclear Option Chinese Localization Patch";
-        internal const string PluginVersion = "1.5.3";
+        internal const string PluginVersion = "1.5.4";
 
         // ------------------------------------------------------------------
         // 数据一律挂在静态属性上。
@@ -130,6 +130,7 @@ namespace NuclearOptionChineseLocalizationPatch
             Log.Info(
                 $"词表已载入：普通 {Table.GlobalCount} / 模板 {Table.TemplateCount} / " +
                 $"片段 {Table.FragmentCount} / 作用域 {Table.ScopeCount}；" +
+                $"模板指纹 {Table.TemplateFingerprintCount} 条（回落匹配用）；" +
                 $"排除名单 scopes {Exclusions.ScopeCount} / terms {Exclusions.TermCount} / texts {Exclusions.TextCount}" +
                 (initial ? "" : "（热重载）"));
         }
