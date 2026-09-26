@@ -81,31 +81,37 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
                 FixScrollbarDirection(template);
 
-                WidenToFit(template, itemText, dd.options);
+                float templateW = template.rect.width;
+                float labelW = itemText.rectTransform.rect.width;
+                float maxPref = MeasureMaxOptionWidth(itemText, dd.options);
+
+                float delta = maxPref + ExtraPadding - labelW;
+                if (delta >= MinDelta && templateW + delta <= MaxTemplateWidth)
+                {
+                    ApplyWidth(template, itemText, delta);
+                    Diagnostics.Log.Info(string.Format(
+                        "[挂架下拉] 已加宽 +{0:F0}px：模板 {1:F0}->{2:F0}px，标签 {3:F0}px，最长译文 {4:F0}px",
+                        delta, templateW, templateW + delta, labelW, maxPref));
+                }
+                else
+                {
+                    Diagnostics.Log.Info(string.Format(
+                        "[挂架下拉] 未加宽：模板 {0:F0}px，标签 {1:F0}px，最长译文 {2:F0}px，需差 {3:F0}px（负=装得下）",
+                        templateW, labelW, maxPref, maxPref + ExtraPadding - labelW));
+                }
             }
             catch (System.Exception ex)
             {
-                // UI 修整失败不该连累翻译本身，吞掉但留一句日志。
-                Diagnostics.Log.Debug("挂架下拉框修整失败：" + ex.Message);
+                // UI 修整失败不该连累翻译本身；Warn 默认可见，便于实机定位。
+                Diagnostics.Log.Warn("挂架下拉框修整失败：" + ex.GetType().Name + ": " + ex.Message);
             }
         }
 
-        /// <summary>模板上的竖向滚动条规范化为 BottomToTop（见类注释第 3 点）。</summary>
-        private static void FixScrollbarDirection(RectTransform template)
+        /// <summary>量出所有选项译文里最宽的那条首选宽（用模板 item 标签的字体设置）。</summary>
+        private static float MeasureMaxOptionWidth(TMP_Text itemText, IReadOnlyList<TMP_Dropdown.OptionData> options)
         {
-            Scrollbar bar = template.GetComponentInChildren<Scrollbar>(true);
-            if (bar == null) return;
-            if (bar.direction == Scrollbar.Direction.BottomToTop) return;
-            if (bar.direction != Scrollbar.Direction.TopToBottom) return; // 只修竖向的反向
-            bar.direction = Scrollbar.Direction.BottomToTop; // 属性 setter 会重映射当前取值
-        }
+            if (options == null || options.Count == 0) return 0f;
 
-        /// <summary>按选项译文的最长首选宽把模板加宽到刚好够。</summary>
-        private static void WidenToFit(RectTransform template, TMP_Text itemText, IReadOnlyList<TMP_Dropdown.OptionData> options)
-        {
-            if (options == null || options.Count == 0) return;
-
-            // 用模板自带的 item 标签测量：字体、字号、字距、边距全部与真实渲染一致。
             // 这一版 TMP 里 GetPreferredWidth 两个重载都是 protected，公共入口是
             // GetPreferredValues(string)（返回宽高向量，纯布局演算，不写 m_text）。
             // 选项原始串是英文；实际显示的是译文，量之前先过一遍自家翻译管线。
@@ -121,28 +127,35 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 float w = itemText.GetPreferredValues(shown).x;
                 if (w > maxPref) maxPref = w;
             }
-            if (maxPref <= 0f) return;
-            maxPref += ExtraPadding;
+            return maxPref;
+        }
 
-            float labelW = itemText.rectTransform.rect.width;
-            float delta = maxPref - labelW;
-            if (delta < MinDelta) return; // 装得下，不动
-
-            float newWidth = template.rect.width + delta;
-            if (newWidth > MaxTemplateWidth)
-                delta -= newWidth - MaxTemplateWidth; // 钳到上限
-            if (delta < MinDelta) return;
-
-            // 模板自身必然加宽；子节点若不是横向拉伸锚（不随父变宽）就一并加。
-            // 层级按 TMP 标准模板路径找：Template/Viewport/Content/Item/{Item Background, Item Label}。
-            // 找不到的（层级被改过 / 本来就是拉伸锚）跳过即可，拉伸锚会随父变宽。
+        /// <summary>模板加宽 delta，并沿 itemText→模板的祖先链补宽所有非拉伸锚节点。</summary>
+        private static void ApplyWidth(RectTransform template, TMP_Text itemText, float delta)
+        {
             template.sizeDelta += new Vector2(delta, 0f);
 
-            StretchChild(itemText.rectTransform, delta);
-            StretchChild(FindByPath(template, "Viewport"), delta);
-            StretchChild(FindByPath(template, "Viewport/Content"), delta);
-            StretchChild(FindByPath(template, "Viewport/Content/Item"), delta);
+            // 祖先链兜底：不假设模板子节点叫什么名字（游戏预制体未必是 TMP 标准层级）。
+            // 拉伸锚的节点随父变宽，天然跳过；固定宽的中间层（视口/内容/行）逐个补上增量。
+            Transform t = itemText.transform;
+            while (t != null && !(t is RectTransform rt && rt == template))
+            {
+                StretchChild(t as RectTransform, delta);
+                t = t.parent;
+            }
+
+            // 选中高亮背景是 item 标签的兄弟节点，不在祖先链上，按名字补一遍。
             StretchChild(FindByPath(template, "Viewport/Content/Item/Item Background"), delta);
+        }
+
+        /// <summary>模板上的竖向滚动条规范化为 BottomToTop（见类注释第 3 点）。</summary>
+        private static void FixScrollbarDirection(RectTransform template)
+        {
+            Scrollbar bar = template.GetComponentInChildren<Scrollbar>(true);
+            if (bar == null) return;
+            if (bar.direction == Scrollbar.Direction.BottomToTop) return;
+            if (bar.direction != Scrollbar.Direction.TopToBottom) return; // 只修竖向的反向
+            bar.direction = Scrollbar.Direction.BottomToTop; // 属性 setter 会重映射当前取值
         }
 
         /// <summary>横向拉伸锚的节点随父变宽，跳过；固定宽的节点补上增量。</summary>
