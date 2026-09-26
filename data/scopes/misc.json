@@ -1,0 +1,21 @@
+{
+  "[Catapult Label]Taxi to Catapult": "滑行至弹射器",
+  "[MissionDescription]A fast-paced PvP scenario where BDF must defend their supercarrier fleet in the newly introduced FS-41 Eclipse and PALA must destroy the fleet with advanced supersonic bombers escorted by multirole fighters.": "快节奏的 PvP 场景：BDF 须驾驶新登场的 FS-41 日蚀保卫己方超级航母编队；PALA 则须在多用途战斗机护航下，以先进超音速轰炸机摧毁该编队。",
+  "[MissionDescription]A pair of lighter Helion-class carriers sit at the frontline with accompanying PB escorts.": "两艘较小的赫利昂级航母部署在前线，由 PB 护卫舰伴随。",
+  "[MissionDescription]BBDF's objective is to protect the CSG and destroy a heavily fortified PALA airbase in the occupied Feldspar International Airport.": "BDF 方的目标是保护 CSG，并摧毁位于被占领的长石国际机场、设防坚固的 PALA 空军基地。",
+  "[MissionDescription]Learn how to use the catapults of a Penumbra-class Supercarrier and utilise the FS-41 Eclipse in a high speed combat air patrol to destroy an incoming PALA bomber wave.": "学习使用半影级超级航母的弹射器，驾驶 FS-41 日蚀执行高速战斗空中巡逻，拦截来袭的 PALA 轰炸机编队。",
+  "[MissionDescription]PALA's objective is to destroy the BDF carrier strike group.": "PALA 方的目标是摧毁 BDF 航母打击群。",
+  "[MissionDescription]Two Penumbra-class Supercarriers clash in a battle for the Ignus. Both carriers have their full air wings and light escorts.": "两艘半影级超级航母为争夺伊格尼斯群岛而交锋。双方航母均搭载完整航空联队与轻型护航舰艇。",
+  "[Revealed_Cam_Label]Cam": "相机",
+  "[Revealed_InfoPanel_Label]InfoPanel": "信息面板",
+  "[Revealed_List_Label]List": "列表",
+  "[Revealed_Radar_Label]Radar": "雷达",
+  "[Revealed_Status_Label]Status": "状态",
+  "[Revealed_TargetList_Label]TargetList": "目标列表",
+  "[Revealed_briefing_Label]briefing": "简报",
+  "[Subtitle]SYSTEM BOOT ......": "系统启动 ......",
+  "[description value]A great place for new players to learn the ropes. The description would highlight the helpful community and the cooperative nature of the missions.": "适合新玩家熟悉游戏的好地方。这段描述会突出乐于助人的社区氛围以及任务的合作性质。",
+  "[h3]Lobby Name": "大厅名称",
+  "[map Value]ignus archipeglago": "伊格尼斯群岛",
+  "[mission Value]Mountian Pass": "山口"
+}
