@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""翻译审核台 —— 零依赖的本地 Web 工具，用来审阅与修改 data/translation.json。
+"""翻译审核台 —— 零依赖的本地 Web 工具，用来审阅与修改 data/ 下的整套词表。
+
+词表是**按分类拆成多个文件**的（`translation.json` / `templates.json` /
+`fragments.json` / `scopes/*.json`，规则见 `tools/_table_layout.py`）。审核台对外
+只暴露一份**合并视图**（键按码点升序，与运行时查表口径一致），写回时逐文件做最小 diff、
+新增的键按分类规则落进它该去的文件 —— 于是「分类」这件事在编辑体验上是透明的。
 
 为什么是这样设计的（每一条都是被这个仓库的既有约定逼出来的）
 ------------------------------------------------------------------
@@ -14,7 +19,7 @@
   未触碰行逐字节不变），任一条不成立就从备份还原，绝不把坏表留在磁盘上。
 * **序列化必须逐字复现既有风格。** `json.dumps(x, ensure_ascii=False)` 恰好就是这个
   仓库的写法：控制字符（U+0001 占位符）转义成 `\\u0001`，中文与其它字符原样保留。
-  这一点有断言兜底（见 `_verify_roundtrip`），风格一旦漂移会立刻报错而不是静默产生 diff。
+  这一点有断言兜底（见 `--selftest`），风格一旦漂移会立刻报错而不是静默产生 diff。
 
 只读的审视能力（审核台的主要价值）
 ------------------------------------------------------------------
@@ -69,6 +74,10 @@ SCOPE_RE = re.compile(r"^\[([^\]\n]{1,40})\]")
 TAG_RE = re.compile(r"<[^>]*>")
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 LATIN_RE = re.compile(r"[A-Za-z]")
+
+# 词表布局（分类文件规则）的唯一事实来源，与插件加载器、check_data.py、split_table.py 共用。
+sys.path.insert(0, os.path.dirname(HERE))
+from _table_layout import CATEGORIES, home_file, table_files   # noqa: E402
 
 KIND_LABELS = {
     "plain": "裸键",
@@ -141,15 +150,11 @@ def strip_comma(line):
     return line[:-1] if line.endswith(",") else line
 
 
-# 文件结构：`{` + N 行条目 + `}` + `split("\n")` 留下的末尾空串。
-# 于是「总行数 = 条目数 + 3」—— 这个 3 曾经被我写成 2，导致每次保存的自检
-# 都误判「行数与条目数不匹配」而回滚。留成常量，别再手算。
+# 文件结构：`{` + N 行条目 + `}` + 末尾的 `"\n"`。
+# `text.split("\n")` 得到 **N + 3** 个元素（最后一个是空串），所以「行数 = 条目数 + 3」。
+# 这个 3 曾被写成 2 —— 那是把「编辑器里显示的行数」当成了 split 后的元素数，
+# 于是每次保存的自检都误判「行数与条目数不匹配」而回滚。留成常量，别再手算。
 LINE_OVERHEAD = 3
-
-
-def count_entries(lines):
-    """从一个行数组反推条目数（供自检与预览显示用）。"""
-    return len(lines) - LINE_OVERHEAD
 
 
 def display_width(text):
@@ -158,46 +163,83 @@ def display_width(text):
 
 
 class Table(object):
-    """data/translation.json 的内存模型。
+    """data/ 下**整套分类词表**的内存模型（不是一个文件）。
 
-    持有**原始行**与**行号索引**，这是「最小 diff 写回」的前提：
-    没被改的键，它那一行直接原样搬过去。
+    对外只暴露一份**合并视图**：`pairs` 是全表键值对（按码点升序），`flags` /
+    `entry()` / `group_keys()` 都基于它。写回则逐文件做 —— 每个文件持有自己的
+    `raw` 与 `lines`，没被改的行原样搬过去，这是「最小 diff 写回」的前提。
+
+    文件清单与「新键该落哪个文件」由 `_table_layout` 决定（`table_files` /
+    `home_file`），与插件加载器、`check_data.py`、`split_table.py` 共用同一份规则。
     """
 
-    def __init__(self, path):
-        self.path = path
-        self.mtime = None
+    def __init__(self, data_dir):
+        self.data_dir = data_dir
         self.load()
+
+    def _path(self, rel):
+        return os.path.join(self.data_dir, rel.replace("/", os.sep))
 
     # ---- 载入 ----------------------------------------------------------
     def load(self):
-        raw = open(self.path, "rb").read()
-        self.had_bom = raw[:3] == b"\xef\xbb\xbf"
-        self.crlf = raw.count(b"\r\n")
-        text = raw.decode("utf-8-sig")
-        self.pairs = json.loads(text, object_pairs_hook=lambda kv: kv)   # 保留文件顺序
-        self.lines = text.split("\n")
-        self.load_problems = self._structure_problems()
+        self.files = [rel for rel, _ in table_files(self.data_dir)]
+        self.file_raw = {}
+        self.file_lines = {}
+        self.file_pairs = {}
+        self.load_problems = []
+
+        for rel, path in table_files(self.data_dir):
+            raw = open(path, "rb").read()
+            self.file_raw[rel] = raw
+            text = raw.decode("utf-8-sig")
+            self.file_lines[rel] = text.split("\n")
+            self.file_pairs[rel] = json.loads(text, object_pairs_hook=lambda kv: kv)
+            self.load_problems += ["%s: %s" % (rel, p) for p in
+                                   self._structure_problems(rel, raw, text)]
+
+        # 合并视图。**跨文件重键**必须报出来：加载器是「后读到的覆盖先读到的」，
+        # 同一个键出现在两个文件里就是同原文两份译文，且哪份生效取决于文件名排序。
+        self.pairs = sorted(((k, v) for rel in self.files for k, v in self.file_pairs[rel]),
+                            key=lambda kv: kv[0])
+        # 合并视图按**码点升序**排序，于是「第几行」在合并视图里没有意义 ——
+        # 但「这条在哪个文件、文件内第几行」有意义（要能定位到磁盘）。
+        self.file_of_key = {}       # key -> 相对路径（如 scopes/ui.json）
+        self.entry_index = {}       # key -> 在 file_pairs[rel] 里的**下标**（0 起）
+        self.line_of_key = {}       # key -> 真实文件行号（1 起；第 1 行是 "{"）
+        seen = {}
+        for rel in self.files:
+            for index, (key, _) in enumerate(self.file_pairs[rel]):
+                if key in seen and seen[key] != rel:
+                    self.load_problems.append(
+                        "跨文件重键：%r 同时出现在 %s 与 %s（同一原文只能有一个译文）"
+                        % (key, seen[key], rel))
+                seen[key] = rel
+                self.file_of_key[key] = rel
+                self.entry_index[key] = index
+                self.line_of_key[key] = index + 2
         self.key_to_index = {k: i for i, (k, _) in enumerate(self.pairs)}
-        self.line_of_key = {k: i + 1 for i, (k, _) in enumerate(self.pairs)}
-        self.mtime = os.path.getmtime(self.path)
-        self.md5 = hashlib.md5(raw).hexdigest()
+
+        self.md5 = hashlib.md5(
+            b"".join(self.file_raw[rel] for rel in self.files)).hexdigest()
+        self.mtime = max(os.path.getmtime(self._path(rel)) for rel in self.files) \
+            if self.files else None
         self._build_flags()
 
-    def _structure_problems(self):
-        """首尾结构 + 行数与条目数一致 —— 逐行替换的全部前提都挂在这上面。"""
+    def _structure_problems(self, rel, raw, text):
+        """单文件的首尾结构 + 行数与条目数一致 —— 逐行替换的全部前提都挂在这上面。"""
         problems = []
-        if self.had_bom:
+        lines = self.file_lines[rel]
+        pairs = self.file_pairs[rel]
+        if raw[:3] == b"\xef\xbb\xbf":
             problems.append("文件带 BOM，应为无 BOM")
-        if self.crlf:
-            problems.append("含 %d 处 CRLF，应为纯 LF" % self.crlf)
-        if len(self.lines) < 3 or self.lines[0] != "{" or self.lines[-1] != "" \
-                or self.lines[-2] != "}":
+        if raw.count(b"\r\n"):
+            problems.append("含 %d 处 CRLF，应为纯 LF" % raw.count(b"\r\n"))
+        if len(lines) < 3 or lines[0] != "{" or lines[-1] != "" or lines[-2] != "}":
             problems.append("首尾结构异常（应为 `{` / 各一行条目 / `}` / 空尾行）")
-        body = self.lines[1:-2] if len(self.lines) >= 3 else []
-        if len(body) != len(self.pairs):
-            problems.append("正文行数 %d 与条目数 %d 不一致" % (len(body), len(self.pairs)))
-        keys = [k for k, _ in self.pairs]
+        body = lines[1:-2] if len(lines) >= 3 else []
+        if len(body) != len(pairs):
+            problems.append("正文行数 %d 与条目数 %d 不一致" % (len(body), len(pairs)))
+        keys = [k for k, _ in pairs]
         if len(keys) != len(set(keys)):
             problems.append("存在字面重复键（json 装 dict 时会静默丢键）")
         violations = [(keys[i], keys[i + 1]) for i in range(len(keys) - 1)
@@ -289,7 +331,7 @@ class Table(object):
         return SCOPE_RE.sub("", key)
 
     def entry(self, key):
-        if key not in self.line_of_key:
+        if key not in self.file_of_key:
             return None
         index = self.key_to_index[key]
         value = self.pairs[index][1]
@@ -300,7 +342,9 @@ class Table(object):
             "kind": self.kind_of(key),
             "scope": self.scope_of(key),
             "plain": plain,
-            "line": self.line_of_key[key],
+            "file": self.file_of_key[key],           # 这条词条落在哪个分类文件
+            "home": home_file(key),                  # 写出时该去哪个文件（可能有布局漂移）
+            "line": self.line_of_key[key],           # 该文件内的真实行号（1 起）
             "flags": list(self.flags.get(key, [])),
             "w_src": display_width(plain),
             "w_dst": display_width(value),
@@ -326,173 +370,285 @@ class Table(object):
 
     # ---- 写回 ----------------------------------------------------------
     def _build_edits(self, edits, adds, deletes):
-        """生成新行数组。返回 (new_lines, changed_keys, dropped_keys, notes)。
+        """按文件生成新行数组，返回一个**计划字典**（不落盘）。
 
-        实现要点：把正文摊成 `[(key, 原始行)]` 的列表，所有增删改都在**行**这一层做，
-        没碰到的行原样保留 —— 这样 diff 精确等于「被改的那些行」，一个字节都不多。
-        定位一律走 `bisect`（正文本身按码点升序），**不去解析行文本**
+        与单文件版的关键差别：每一条增删改都先经 `home_file()` / `file_of_key()`
+        落到某个分类文件，再在该文件**内部**做行级最小 diff：
+
+        * 改一条 `scopes/ui.json` 里的词条 → 只有那一个文件的那一行会变；
+        * 新增的键按分类规则落进它该去的文件（「分类」对编辑者是透明的）；
+        * 某个文件被删空 → 整个文件移除。这一条不能省：`split_table.py --check`
+          的 `partition()` 不含空文件，会判定它是「残留旧文件」= 布局漂移。
+          两处口径必须一致，否则审核台保存一次就把布局检查搞红。
+
+        定位一律走 `bisect`（每个文件的正文本身按码点升序），**不去解析行文本**
         （键里可能含冒号，`split(":")` 会解析错）。
         """
         notes = []
-        body = [(key, self.lines[i + 1]) for i, (key, _) in enumerate(self.pairs)]
-        order = [key for key, _ in body]
         changed, dropped = set(), set()
+        removed = []
 
-        for key in deletes:
-            if key not in self.key_to_index:
-                notes.append("待删除的键不存在，已跳过：%r" % key)
-                continue
+        # rel -> [(键, 行)] 与 rel -> [键]，两者下标**平行**，所有增删都成对进行
+        bodies = {rel: [(k, self.file_lines[rel][i + 1])
+                        for i, (k, _) in enumerate(self.file_pairs[rel])]
+                  for rel in self.files}
+        orders = {rel: [k for k, _ in self.file_pairs[rel]] for rel in self.files}
+        touched = set()
+
+        def slot(key):
+            """键 -> (所属文件, 在当前正文里的下标)；找不到返回 (None, -1)。"""
+            rel = self.file_of_key.get(key)
+            if rel is None:
+                return None, -1
+            order = orders[rel]
             index = bisect.bisect_left(order, key)
             if index >= len(order) or order[index] != key:
+                return None, -1
+            return rel, index
+
+        for key in deletes:
+            rel, index = slot(key)
+            if rel is None:
                 notes.append("待删除的键不存在，已跳过：%r" % key)
                 continue
-            del body[index]
-            del order[index]
+            del bodies[rel][index]
+            del orders[rel][index]
             dropped.add(key)
+            touched.add(rel)
 
         for key, value in edits.items():
-            if key not in self.key_to_index:
+            rel, index = slot(key)
+            if rel is None:
                 notes.append("待编辑的键不存在，已跳过：%r" % key)
                 continue
             if not isinstance(value, str):
                 notes.append("译文必须是字符串，已跳过：%r" % key)
                 continue
-            index = bisect.bisect_left(order, key)
-            body[index] = (key, dumps_line(key, value))
+            bodies[rel][index] = (key, dumps_line(key, value))
             changed.add(key)
+            touched.add(rel)
 
         for key, value in adds.items():
-            if key in self.key_to_index:
+            if key in self.file_of_key:
                 notes.append("待新增的键已存在，已跳过：%r" % key)
                 continue
             if not isinstance(value, str):
                 notes.append("译文必须是字符串，已跳过：%r" % key)
                 continue
-            index = bisect.bisect_left(order, key)
-            body.insert(index, (key, dumps_line(key, value)))
-            order.insert(index, key)
+            rel = home_file(key)                     # 分类规则决定它去哪个文件
+            if rel not in bodies:                    # 该文件还不存在（例如 templates.json 被删过）
+                bodies[rel], orders[rel] = [], []
+            index = bisect.bisect_left(orders[rel], key)
+            bodies[rel].insert(index, (key, dumps_line(key, value)))
+            orders[rel].insert(index, key)
             changed.add(key)
+            touched.add(rel)
 
-        # 逗号归一：正文每行都要有尾逗号，只有最后一行没有。
-        # 这一趟只可能改动「成为末行」或「不再是末行」的那一行 ——
-        # 其余行的字符串本来就以逗号结尾，赋值是空操作（不会污染最小 diff）。
-        last = len(body) - 1
-        for i in range(len(body)):
-            line = body[i][1]
-            want, has = i != last, line.rstrip().endswith(",")
-            if want and not has:
-                body[i] = (body[i][0], line.rstrip() + ",")
-            elif not want and has:
-                body[i] = (body[i][0], strip_comma(line))
+        # 逗号归一（逐文件）：正文每行都要有尾逗号，只有该文件的最后一行没有。
+        # 这一趟只可能改动「成为末行」或「不再是末行」的那一行 —— 其余行的字符串
+        # 本来就以逗号结尾，赋值是空操作（不会污染最小 diff）。
+        new_file_lines = {}
+        for rel in sorted(touched):
+            body = bodies[rel]
+            if not body:
+                removed.append(rel)                  # 删空 → 撤掉整个文件
+                continue
+            last = len(body) - 1
+            for i in range(len(body)):
+                line = body[i][1]
+                want, has = i != last, line.rstrip().endswith(",")
+                if want and not has:
+                    body[i] = (body[i][0], line.rstrip() + ",")
+                elif not want and has:
+                    body[i] = (body[i][0], strip_comma(line))
+            lines = [line for _, line in body]
+            # 首行 `{` 与末两行 `}` / 空串：既有文件沿用原样，新建文件补标准骨架。
+            if rel in self.file_lines:
+                new_file_lines[rel] = [self.file_lines[rel][0]] + lines + self.file_lines[rel][-2:]
+            else:
+                new_file_lines[rel] = ["{"] + lines + ["}", ""]
 
-        new_lines = [self.lines[0]] + [line for _, line in body] + self.lines[-2:]
-        return new_lines, changed, dropped, notes
+        return {"files": new_file_lines, "removed": removed, "changed": changed,
+                "dropped": dropped, "notes": notes,
+                "total": sum(len(body) for rel, body in bodies.items())}
+
+    def _diffs_of(self, plan):
+        """逐文件 unified diff —— 合并视图里「第几行」没有意义，diff 只能按文件给。"""
+        out = []
+        for rel in sorted(plan["files"]):
+            old = self.file_lines.get(rel)
+            new = plan["files"][rel]
+            if old == new:
+                continue                                 # 只是被逗号归一擦到，不算改动
+            out.append({"file": rel, "created": old is None, "removed": False,
+                        "diff": list(difflib.unified_diff(
+                            old or [], new,
+                            fromfile="a/" + rel, tofile="b/" + rel,
+                            lineterm="", n=1))})
+        for rel in plan["removed"]:
+            out.append({"file": rel, "created": False, "removed": True,
+                        "diff": ["--- a/" + rel, "+++ /dev/null",
+                                 "@@ 整个文件被删空，按布局规则直接移除 @@"]})
+        return out
 
     def preview(self, edits, adds, deletes):
-        """不落盘的 diff 预览（unified，行号在左）。"""
-        new_lines, changed, dropped, notes = self._build_edits(edits, adds, deletes)
-        diff = list(difflib.unified_diff(
-            self.lines, new_lines,
-            fromfile="a/translation.json", tofile="b/translation.json",
-            lineterm="", n=1))
-        return {"diff": diff, "notes": notes,
-                "touched": sorted(changed), "dropped": sorted(dropped),
-                "old_count": len(self.pairs),
-                "new_count": count_entries(new_lines)}
+        """不落盘的改动预览（逐文件 unified diff）。"""
+        plan = self._build_edits(edits, adds, deletes)
+        return {"diffs": self._diffs_of(plan), "notes": plan["notes"],
+                "files": sorted(plan["files"]) + plan["removed"],
+                "touched": sorted(plan["changed"]), "dropped": sorted(plan["dropped"]),
+                "old_count": len(self.pairs), "new_count": plan["total"]}
 
     def save(self, edits, adds, deletes, backup_dir, keep_backups=20):
-        """备份 -> 逐行写回 -> 自检 -> 失败回滚。返回结果字典。"""
-        new_lines, changed, dropped, notes = self._build_edits(edits, adds, deletes)
+        """备份 -> 逐文件写回 -> 自检 -> 失败回滚。返回结果字典。
+
+        没有备份目录就**拒绝写盘**：「自检失败必回滚」这条保证完全建立在备份上，
+        拿不到备份就不该动真表。
+        """
+        plan = self._build_edits(edits, adds, deletes)
+        changed, dropped, notes = plan["changed"], plan["dropped"], plan["notes"]
         if not changed and not dropped:
             return {"ok": False, "reason": "没有实际改动", "notes": notes}
+        if not backup_dir:
+            return {"ok": False, "reason": "未指定备份目录，拒绝写盘", "notes": notes}
 
-        # 1) 备份
-        backup = None
-        if backup_dir:
-            os.makedirs(backup_dir, exist_ok=True)
-            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            backup = os.path.join(backup_dir, "translation.json.%s" % stamp)
-            shutil.copy2(self.path, backup)
-            self._prune_backups(backup_dir, keep_backups)
+        # 1) 备份：逐文件复制到 data/.backups/<时间戳>/，保持相对路径（回滚时原样搬回）。
+        #    回滚粒度是**文件**，所以只备份这一轮真正会动的那些。
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        root = os.path.join(backup_dir, stamp)
+        backup_of, created = {}, []
+        for rel in sorted(plan["files"]):
+            src = self._path(rel)
+            if not os.path.isfile(src):
+                created.append(rel)                  # 新建文件：回滚时要把它删掉
+                continue
+            dst = os.path.join(root, rel.replace("/", os.sep))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+            backup_of[rel] = dst
+        self._prune_backups(backup_dir, keep_backups)
 
-        # 2) 写回
-        text = "\n".join(new_lines)
-        with io.open(self.path, "w", encoding="utf-8", newline="") as fh:
-            fh.write(text)
+        # 2) 写回。没被编辑的行逐字节原样搬过去，diff 精确等于改动本身。
+        for rel, lines in plan["files"].items():
+            path = self._path(rel)
+            parent = os.path.dirname(path)
+            if parent and not os.path.isdir(parent):
+                os.makedirs(parent)
+            with io.open(path, "w", encoding="utf-8", newline="") as fh:
+                fh.write("\n".join(lines))
+        for rel in plan["removed"]:
+            try:
+                os.remove(self._path(rel))
+            except OSError:
+                pass
 
-        # 3) 自检
-        problems = self._verify(new_lines, changed, dropped, adds)
+        # 3) 自检：**重新从磁盘读**，验的是真落盘结果而不是内存里的字符串
+        problems = self._verify(plan)
         if problems:
-            if backup and os.path.isfile(backup):
-                shutil.copy2(backup, self.path)
+            for rel, dst in backup_of.items():
+                shutil.copy2(dst, self._path(rel))
+            for rel in created:
+                try:
+                    os.remove(self._path(rel))
+                except OSError:
+                    pass
             self.load()
             return {"ok": False, "reason": "自检未通过，已从备份回滚",
-                    "problems": problems, "backup": backup, "notes": notes}
+                    "problems": problems, "backup": root, "notes": notes}
 
-        diff = list(difflib.unified_diff(
-            self.lines, new_lines,
-            fromfile="a/translation.json", tofile="b/translation.json",
-            lineterm="", n=1))
+        diffs = self._diffs_of(plan)
         self.load()
-        return {"ok": True, "backup": backup, "notes": notes,
-                "diff": diff, "touched": sorted(changed), "dropped": sorted(dropped),
+        return {"ok": True, "backup": root, "notes": notes,
+                "diffs": diffs, "files": sorted(plan["files"]) + plan["removed"],
+                "touched": sorted(changed), "dropped": sorted(dropped),
                 "count": len(self.pairs)}
 
-    def _verify(self, new_lines, changed, dropped, adds):
-        """落盘后的不变量复核。任何一条不成立都说明手工行替换出了岔子。"""
+    def _verify(self, plan):
+        """落盘后的不变量复核（**从磁盘重新读**，不是验内存字符串）。
+
+        任何一条不成立都说明手工行替换出了岔子。逐文件查，最后再查一次
+        「磁盘上的词表文件集合」是否符合预期 —— 布局是这套工具的存在理由，
+        写坏了文件集合比写坏一行更难发现。
+        """
         problems = []
-        text = "\n".join(new_lines)
-        if text[:1] == "\ufeff":
-            problems.append("写出的文件带 BOM")
-        if "\r" in text:
-            problems.append("写出的文件含 CR")
-        try:
-            new_pairs = json.loads(text, object_pairs_hook=lambda kv: kv)
-        except Exception as exc:                     # noqa: BLE001
-            return ["写出的文件不是合法 JSON：%s" % exc]
-
-        keys = [k for k, _ in new_pairs]
-        if len(keys) != len(set(keys)):
-            problems.append("出现字面重复键")
-        bad = [(keys[i], keys[i + 1]) for i in range(len(keys) - 1) if keys[i] > keys[i + 1]]
-        if bad:
-            problems.append("键序被破坏，%d 处：%r" % (len(bad), bad[:3]))
-        if len(new_lines) != len(new_pairs) + LINE_OVERHEAD:
-            problems.append("行数 %d 与条目数 %d 不匹配" % (len(new_lines), len(new_pairs)))
-        if any(not isinstance(v, str) for _, v in new_pairs):
-            problems.append("有译文不是字符串")
-        body = new_lines[1:-2]
-        for i, line in enumerate(body):
-            want_comma = i != len(body) - 1
-            if line.rstrip().endswith(",") != want_comma:
-                problems.append("第 %d 行逗号位不对" % (i + 2))
-                break
-
-        # 未触碰的键：那一行必须逐字节不变（这是「最小 diff」的硬保证）
-        new_line_of = {k: line for k, line in zip(keys, body)}
-        for key, old_index in self.line_of_key.items():
-            if key in changed or key in dropped or key in adds:
+        for rel in sorted(plan["files"]):
+            path = self._path(rel)
+            if not os.path.isfile(path):
+                problems.append("%s: 写盘后文件不存在" % rel)
                 continue
-            if key not in new_line_of:
-                problems.append("键凭空消失：%r" % key)
-                break
-            if strip_comma(new_line_of[key]) != strip_comma(self.lines[old_index]):
-                problems.append("未编辑的键却变了：%r" % key)
-                break
+            raw = open(path, "rb").read()
+            if raw[:3] == b"\xef\xbb\xbf":
+                problems.append("%s: 写出的文件带 BOM" % rel)
+            text = raw.decode("utf-8-sig")
+            if "\r" in text:
+                problems.append("%s: 写出的文件含 CR（应为纯 LF）" % rel)
+            lines = text.split("\n")
+            if lines[:1] != ["{"] or lines[-2:] != ["}", ""]:
+                problems.append("%s: 首尾结构异常（应为 `{` / 条目 / `}` / 空尾行）" % rel)
+            try:
+                new_pairs = json.loads(text, object_pairs_hook=lambda kv: kv)
+            except Exception as exc:                 # noqa: BLE001
+                problems.append("%s: 写出的不是合法 JSON：%s" % (rel, exc))
+                continue
+
+            keys = [k for k, _ in new_pairs]
+            if keys != sorted(keys):
+                bad = [(keys[i], keys[i + 1]) for i in range(len(keys) - 1)
+                       if keys[i] > keys[i + 1]]
+                problems.append("%s: 键序被破坏，%d 处：%r" % (rel, len(bad), bad[:3]))
+            if len(keys) != len(set(keys)):
+                problems.append("%s: 出现字面重复键" % rel)
+            if len(lines) != len(new_pairs) + LINE_OVERHEAD:
+                problems.append("%s: 行数 %d 与条目数 %d 不匹配"
+                                % (rel, len(lines), len(new_pairs)))
+            if any(not isinstance(v, str) for _, v in new_pairs):
+                problems.append("%s: 有译文不是字符串" % rel)
+            body = lines[1:-2]
+            for i, line in enumerate(body):
+                if line.rstrip().endswith(",") != (i != len(body) - 1):
+                    problems.append("%s: 第 %d 行逗号位不对" % (rel, i + 2))
+                    break
+
+            # 未触碰的键：那一行必须逐字节不变（这是「最小 diff」的硬保证）
+            if rel in self.file_pairs:
+                new_line_of = {k: line for k, line in zip(keys, body)}
+                for index, (key, _) in enumerate(self.file_pairs[rel]):
+                    if key in plan["changed"] or key in plan["dropped"]:
+                        continue
+                    if key not in new_line_of:
+                        problems.append("%s: 键凭空消失：%r" % (rel, key))
+                        break
+                    if strip_comma(new_line_of[key]) != \
+                            strip_comma(self.file_lines[rel][index + 1]):
+                        problems.append("%s: 未编辑的键却变了：%r" % (rel, key))
+                        break
+
+        for rel in plan["removed"]:
+            if os.path.isfile(self._path(rel)):
+                problems.append("%s: 应被删空移除却仍在磁盘上" % rel)
+
+        # 全局：磁盘上的词表文件集合 == 原集合 - 移除 + 新建
+        now = {rel for rel, _ in table_files(self.data_dir)}
+        want = ({rel for rel in self.files} - set(plan["removed"])) | set(plan["files"])
+        if now != want:
+            problems.append("词表文件集合与预期不符：多出 %s / 缺少 %s"
+                            % ("、".join(sorted(now - want)) or "无",
+                               "、".join(sorted(want - now)) or "无"))
         return problems
 
     @staticmethod
     def _prune_backups(backup_dir, keep):
+        """只清理本工具自己建的时间戳目录；`split_table.py` 写的扁平备份不碰。"""
+        if not backup_dir:
+            return
         try:
-            files = sorted(f for f in os.listdir(backup_dir)
-                           if f.startswith("translation.json."))
+            names = sorted(n for n in os.listdir(backup_dir)
+                           if re.match(r"^\d{8}-\d{6}$", n)
+                           and os.path.isdir(os.path.join(backup_dir, n)))
         except OSError:
             return
-        for name in files[:-keep]:
-            try:
-                os.remove(os.path.join(backup_dir, name))
-            except OSError:
-                pass
+        for name in (names[:-keep] if keep > 0 else names):
+            shutil.rmtree(os.path.join(backup_dir, name), ignore_errors=True)
 
 
 # --------------------------------------------------------------------------
@@ -505,21 +661,41 @@ def load_json(path, default=None):
         return default
 
 
+def table_signature(data_dir):
+    """整套分类词表的合并签名 —— 用来判断「仓库」与「运行目录」是否同源。
+
+    把**相对路径一起喂进摘要**：布局变了（比如新建了 `templates.json`）即使内容
+    逐字节相同，签名也会变。这个方向是对的 —— 布局也是要同步的一部分，
+    运行目录少一个模板文件就是真的不一致。
+
+    返回 ``(md5 或 None, 文件数)``。
+    """
+    try:
+        rels = table_files(data_dir)
+    except OSError:
+        return None, 0
+    if not rels:
+        return None, 0
+    digest = hashlib.md5()
+    for rel, path in rels:
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            digest.update(open(path, "rb").read())
+        except OSError:
+            return None, 0
+    return digest.hexdigest(), len(rels)
+
+
 class Workspace(object):
     """把「仓库数据 + 运行期产物」统一成一份可查询的状态。"""
 
     def __init__(self, data_dir, plugin_dir):
         self.data_dir = data_dir
         self.plugin_dir = plugin_dir
-        self.table = Table(os.path.join(data_dir, "translation.json"))
+        self.table = Table(data_dir)                 # 整套分类词表，不是一个文件
         self.exclusions = load_json(os.path.join(data_dir, "exclusions.json"), {}) or {}
         self.force_scopes = load_json(os.path.join(data_dir, "force_scopes.json"), []) or []
-        self.scopes_files = {}
-        scopes_dir = os.path.join(data_dir, "scopes")
-        if os.path.isdir(scopes_dir):
-            for name in sorted(os.listdir(scopes_dir)):
-                if name.endswith(".json"):
-                    self.scopes_files[name] = load_json(os.path.join(scopes_dir, name), {})
         self.reload_runtime()
 
     # ---- 运行期 --------------------------------------------------------
@@ -622,22 +798,33 @@ class Workspace(object):
         return fallback
 
     # ---- 元信息 / 自检 -------------------------------------------------
+    @staticmethod
+    def _describe(role, rel, path):
+        """一个词表文件的「大小 / md5 / 最后修改」。不存在时三个字段都是 None。"""
+        if os.path.isfile(path):
+            raw = open(path, "rb").read()
+            return {"role": role, "rel": rel, "path": path, "size": len(raw),
+                    "md5": hashlib.md5(raw).hexdigest(),
+                    "mtime": datetime.datetime.fromtimestamp(
+                        os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M:%S")}
+        return {"role": role, "rel": rel, "path": path, "size": None,
+                "md5": None, "mtime": None}
+
     def meta(self):
+        # 词表按分类拆成多文件，所以「仓库 / 运行目录是否同源」要比的是**整套**签名，
+        # 而不是某一个 translation.json 的 md5（那样改了 scopes/ 也会显示「一致」）。
         files = []
-        for label, path in (("仓库词表", os.path.join(self.data_dir, "translation.json")),
-                            ("仓库排除名单", os.path.join(self.data_dir, "exclusions.json")),
-                            ("仓库 force_scopes", os.path.join(self.data_dir, "force_scopes.json")),
-                            ("运行目录词表", os.path.join(self.plugin_dir, "translation.json")),
-                            ("运行目录排除名单", os.path.join(self.plugin_dir, "exclusions.json"))):
-            if os.path.isfile(path):
-                raw = open(path, "rb").read()
-                files.append({"label": label, "path": path, "size": len(raw),
-                              "md5": hashlib.md5(raw).hexdigest(),
-                              "mtime": datetime.datetime.fromtimestamp(
-                                  os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M:%S")})
-            else:
-                files.append({"label": label, "path": path, "size": None,
-                              "md5": None, "mtime": None})
+        for rel, path in table_files(self.data_dir):
+            files.append(self._describe("repo", rel, path))
+        for rel, path in table_files(self.plugin_dir):
+            files.append(self._describe("plugin", rel, path))
+        for role, base in (("repo", self.data_dir), ("plugin", self.plugin_dir)):
+            for rel in ("exclusions.json", "force_scopes.json", "fonts/font.ttf"):
+                files.append(self._describe(role + "-aux", rel,
+                                            os.path.join(base, rel.replace("/", os.sep))))
+
+        repo_md5, repo_n = table_signature(self.data_dir)
+        plugin_md5, plugin_n = table_signature(self.plugin_dir)
 
         counts = collections.Counter()
         flag_counts = collections.Counter()
@@ -645,6 +832,8 @@ class Workspace(object):
             counts[self.table.kind_of(key)] += 1
             for flag in self.table.flags.get(key, []):
                 flag_counts[flag] += 1
+        files_per_cat = collections.Counter(
+            self.table.file_of_key[k] for k, _ in self.table.pairs)
 
         return {
             "repo": REPO,
@@ -657,9 +846,15 @@ class Workspace(object):
             "kind_labels": KIND_LABELS,
             "flag_meta": {k: {"label": v[0], "level": v[1], "tip": v[2]}
                           for k, v in FLAG_META.items()},
+            "categories": [{"name": name, "label": label, "desc": desc,
+                            "entries": files_per_cat.get("scopes/%s.json" % name, 0)}
+                           for name, label, desc in CATEGORIES],
+            "file_entries": dict(files_per_cat),
             "table_md5": self.table.md5,
             "table_mtime": datetime.datetime.fromtimestamp(
-                self.table.mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                self.table.mtime).strftime("%Y-%m-%d %H:%M:%S")
+            if self.table.mtime else None,
+            "table_file_count": len(self.table.files),
             "load_problems": self.table.load_problems,
             "exclusions": {
                 "scopes": self.exclusions.get("scopes", []),
@@ -669,7 +864,6 @@ class Workspace(object):
                 "longGuard": self.exclusions.get("longGuard"),
             },
             "force_scopes": self.force_scopes,
-            "scopes_files": {name: len(data) for name, data in self.scopes_files.items()},
             "runtime": {
                 "missing": None if self.missing is None else len(self.missing),
                 "missing_mtime": self.missing_mtime and datetime.datetime.fromtimestamp(
@@ -678,6 +872,8 @@ class Workspace(object):
                 "untranslated_mtime": self.untranslated_mtime and datetime.datetime.fromtimestamp(
                     self.untranslated_mtime).strftime("%Y-%m-%d %H:%M:%S"),
             },
+            "repo_signature": {"md5": repo_md5, "files": repo_n},
+            "plugin_signature": {"md5": plugin_md5, "files": plugin_n},
             "files": files,
         }
 
@@ -703,6 +899,10 @@ class Workspace(object):
             rows.append({
                 "key": key, "value": value, "kind": kind, "scope": scope,
                 "plain": plain, "flags": list(entry_flags),
+                # 合并视图里「第几行」没有意义，列表要显示的是**所属分类文件**
+                "file": self.table.file_of_key.get(key),
+                "home": home_file(key),
+                "line": self.table.line_of_key.get(key),
                 "w_src": display_width(plain), "w_dst": display_width(value),
             })
 
@@ -753,8 +953,6 @@ class Workspace(object):
 
         for item in t.load_problems:
             problems.append(item)
-        if t.crlf:
-            pass
         for key, value in t.pairs:
             if not isinstance(value, str):
                 problems.append("译文不是字符串：%r" % key[:60])
@@ -784,6 +982,25 @@ class Workspace(object):
         space = [k for k, _ in t.pairs if "space" in t.flags.get(k, [])]
         if space:
             notes.append("译文首尾带空白 %d 条（多数是原文自带的排版空白，逐条判断）" % len(space))
+
+        # 布局漂移：键没待在 home_file() 指定的分类文件里。**不影响运行**
+        # （加载器按键上的前缀分流，与它在哪个文件无关），但 check_data.py 会判失败，
+        # 且 `split_table.py --check` 会一直报。审核台保存时**不**顺手归位 ——
+        # 那会把 diff 从「你改的那几行」放大成「整文件搬迁」。
+        drifted = collections.defaultdict(list)
+        for key, _ in t.pairs:
+            home = t.file_of_key[key]
+            want = home_file(key)
+            if home != want:
+                drifted[(home, want)].append(key)
+        if drifted:
+            total = sum(len(v) for v in drifted.values())
+            sample = "；".join("%s → %s（%d 条，例：%s）"
+                              % (a, b, len(v), v[0][:40])
+                              for (a, b), v in sorted(drifted.items())[:4])
+            notes.append("布局漂移 %d 条：%s　—— 跑 tools/split_table.py --apply 可归位"
+                         % (total, sample))
+
         notes.append("忽略大小写后重复的键 %d 组（译文相同则无害）" % len(self.groups()["case"]))
         if t.mtime:
             age = (datetime.datetime.now() - datetime.datetime.fromtimestamp(t.mtime))
@@ -798,35 +1015,45 @@ class Workspace(object):
         """把仓库 data/ 全量同步到插件运行目录（对应 csproj 的 -t:DeployData）。
 
         只推数据、不碰 DLL —— DLL 由构建产出，工具不该动它。
+
+        词表拆成多文件后，同步必须**按相对路径**成组进行：漏推一个
+        `scopes/*.json` 不会报任何错，只会静默少掉一批词条；反过来，仓库里删掉的
+        文件如果运行目录还留着，加载器照样会读它。两种都是「看起来同步成功了」的
+        故障，所以这里顺带清掉运行目录里已不在仓库的旧词表文件。
         """
         if not os.path.isdir(self.plugin_dir):
             return {"ok": False, "reason": "运行目录不存在：%s" % self.plugin_dir}
-        results = []
-        pairs = []
-        for name in ("translation.json", "exclusions.json", "force_scopes.json"):
-            src = os.path.join(self.data_dir, name)
-            if os.path.isfile(src):
-                pairs.append((src, os.path.join(self.plugin_dir, name), name))
-        pairs.append((os.path.join(self.data_dir, "fonts", "font.ttf"),
-                      os.path.join(self.plugin_dir, "font.ttf"), "font.ttf"))
-        scopes_dir = os.path.join(self.data_dir, "scopes")
-        if os.path.isdir(scopes_dir):
-            os.makedirs(os.path.join(self.plugin_dir, "scopes"), exist_ok=True)
-            for name in sorted(os.listdir(scopes_dir)):
-                if name.endswith(".json"):
-                    pairs.append((os.path.join(scopes_dir, name),
-                                  os.path.join(self.plugin_dir, "scopes", name),
-                                  "scopes/" + name))
 
-        for src, dst, label in pairs:
-            if not os.path.isfile(src):
-                continue
+        wanted = list(table_files(self.data_dir))
+        for rel in ("exclusions.json", "force_scopes.json", "fonts/font.ttf"):
+            path = os.path.join(self.data_dir, rel.replace("/", os.sep))
+            if os.path.isfile(path):
+                wanted.append((rel, path))
+
+        results = []
+        for rel, src in wanted:
+            # 字体在运行目录里是平铺的 `font.ttf`（csproj 与旧布局都是这样）
+            dst_rel = "font.ttf" if rel.endswith("font.ttf") else rel
+            dst = os.path.join(self.plugin_dir, dst_rel.replace("/", os.sep))
+            parent = os.path.dirname(dst)
+            if parent and not os.path.isdir(parent):
+                os.makedirs(parent)
             before = open(dst, "rb").read() if os.path.isfile(dst) else None
             shutil.copy2(src, dst)
             after = open(dst, "rb").read()
-            results.append({"file": label,
-                            "changed": before != after,
+            results.append({"file": dst_rel, "changed": before != after,
                             "md5": hashlib.md5(after).hexdigest()})
+
+        keep = {("font.ttf" if rel.endswith("font.ttf") else rel) for rel, _ in wanted}
+        for rel, path in table_files(self.plugin_dir):
+            if rel in keep:
+                continue
+            try:
+                os.remove(path)
+            except OSError:
+                continue
+            results.append({"file": rel, "changed": True, "removed": True})
+
         return {"ok": True, "results": results, "plugin_dir": self.plugin_dir,
                 "mtime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
@@ -1020,98 +1247,211 @@ class Handler(BaseHTTPRequestHandler):
 # --------------------------------------------------------------------------
 # 自检（--selftest）：不开服务，直接验证「读 -> 逐行写回 -> 自检 -> 落盘」整条链
 # --------------------------------------------------------------------------
+def key_of_diff_line(line):
+    """从 unified diff 的正文行里抠出键。
+
+    只认「去掉 +/- 前缀后，行首是一个 JSON 字符串 + 冒号」这一种形态 ——
+    也就是词表正文行的形态。`@@` 之类的 hunk 头自然抠不出来，返回 None。
+    """
+    body = line[1:] if line[:1] in "+-" else line
+    match = re.match(r'^\s*("(?:[^"\\]|\\.)*")\s*:', body)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(1))
+    except ValueError:
+        return None
+
+
+def _layout_md5(data_dir):
+    """整套词表的指纹（**相对路径 + 内容**都喂进去）。
+
+    比单个 `translation.json` 的 md5 强：把某个键从 `translation.json` 搬到
+    `scopes/ui.json` 而内容一字未改，指纹也会变。自检前后比对它就够了。
+    """
+    digest = hashlib.md5()
+    for rel, path in table_files(data_dir):
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(open(path, "rb").read())
+    return digest.hexdigest()
+
+
 def selftest(data_dir, plugin_dir):
-    """三件事：① 序列化风格没漂移；② 在**临时副本**上真跑一次保存；③ 真文件没被碰。"""
+    """四件事：① 序列化风格没漂移；② 在**临时副本**上真跑一次多文件保存；
+    ③ 两条极端路径（删空整个分类文件 / 重建被删的分类文件）；④ 真词表没被碰。"""
     print("仓库根目录 : %s" % REPO)
     print("数据目录   : %s" % data_dir)
     print("运行目录   : %s" % plugin_dir)
 
-    table_path = os.path.join(data_dir, "translation.json")
-    before = hashlib.md5(open(table_path, "rb").read()).hexdigest()
-
+    before = _layout_md5(data_dir)
     ws = Workspace(data_dir, plugin_dir)
     t = ws.table
-    print("词表       : %d 条，md5=%s" % (len(t.pairs), t.md5))
+    print("词表       : %d 条 / %d 个分类文件，合并 md5=%s"
+          % (len(t.pairs), len(t.files), t.md5[:12]))
+    for rel in t.files:
+        print("             %-24s %5d 条" % (rel, len(t.file_pairs[rel])))
     print("结构问题   : %s" % (t.load_problems or "无"))
     problems = []
+    if t.load_problems:
+        problems.append("载入期就报出 %d 条结构问题，先修数据再谈工具" % len(t.load_problems))
 
     # ---- ① 序列化往返：既有每一行都能被 dumps_line 逐字复现（风格未漂移的证明）----
-    bad = [key for index, (key, value) in enumerate(t.pairs)
-           if strip_comma(t.lines[index + 1]) != strip_comma(dumps_line(key, value))]
-    print("① 序列化往返 : %d/%d 行逐字复现" % (len(t.pairs) - len(bad), len(t.pairs)))
+    total_lines, bad = 0, []
+    for rel in t.files:
+        for index, (key, value) in enumerate(t.file_pairs[rel]):
+            total_lines += 1
+            if strip_comma(t.file_lines[rel][index + 1]) != strip_comma(dumps_line(key, value)):
+                bad.append((rel, key))
+    print("① 序列化往返 : %d/%d 行逐字复现" % (total_lines - len(bad), total_lines))
     if bad:
         problems.append("序列化风格已漂移，%d 行不一致（例：%r）" % (len(bad), bad[:2]))
 
-    # ---- ② 在临时副本上真跑一次保存 ----
+    # ---- ② 在临时副本上真跑一次保存（整套布局一起复制，不然分类文件会缺）----
     tmp = tempfile.mkdtemp(prefix="no_review_selftest_")
+    tmp_data = os.path.join(tmp, "data")
     try:
-        shutil.copy2(table_path, os.path.join(tmp, "translation.json"))
-        tt = Table(os.path.join(tmp, "translation.json"))
+        for rel, path in table_files(data_dir):
+            dst = os.path.join(tmp_data, rel.replace("/", os.sep))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(path, dst)
+        tt = Table(tmp_data)
+        if tt.files != t.files:
+            problems.append("临时副本的文件清单与原目录不一致：%r vs %r"
+                            % (tt.files, t.files))
 
-        target = tt.pairs[len(tt.pairs) // 3][0]
+        target = tt.pairs[len(tt.pairs) // 3][0]     # 大概率落在某个 scopes 文件里
         old_value = tt.entry(target)["value"]
-        fake = "zzz-selftest-\u4e2d\u6587\u952e"
-        edit_value = old_value + "\u3002"
+        scoped_new = "[Radar]zzz-selftest \u4e2d\u6587"   # 应落 scopes/hud.json
+        plain_new = "zzz-selftest plain \u4e2d\u6587"     # 应落 translation.json
 
-        # 空改动必须拒绝写盘
         empty = tt.save({}, {}, [], os.path.join(tmp, "backups"))
         print("②a 空改动    : %s（应拒绝）" % ("已拒绝" if not empty.get("ok") else "竟然写了盘！"))
         if empty.get("ok"):
             problems.append("空改动竟然落盘")
 
-        # 真改动：编辑 1 条 + 新增 1 条
-        result = tt.save({target: edit_value}, {fake: "\u81ea\u68c0\u5360\u4f4d"},
-                         [], os.path.join(tmp, "backups"))
-        print("②b 编辑+新增 : ok=%s%s" % (
+        no_backup = tt.save({target: old_value + "\u3002"}, {}, [], None)
+        print("②b 无备份目录 : %s（应拒绝）"
+              % ("已拒绝" if not no_backup.get("ok") else "竟然没备份就写了盘！"))
+        if no_backup.get("ok"):
+            problems.append("没有备份目录却落盘了")
+
+        result = tt.save({target: old_value + "\u3002"},
+                         {scoped_new: "\u81ea\u68c0\u5360\u4f4d",
+                          plain_new: "\u81ea\u68c0\u5360\u4f4d"}, [],
+                         os.path.join(tmp, "backups"))
+        print("②c 编辑+新增 : ok=%s%s" % (
             result.get("ok"), "" if result.get("ok")
             else "  ！%s %s" % (result.get("reason"), result.get("problems"))))
+        tt2 = Table(tmp_data)                        # 落盘后重新读一份，③ ④ 也要用
         if not result.get("ok"):
             problems.append("保存失败：%s %s" % (result.get("reason"),
                                                 result.get("problems")))
         else:
-            if result["count"] != len(t.pairs) + 1:
+            if result["count"] != len(t.pairs) + 2:
                 problems.append("条目数应为 %d，实际 %d"
-                                % (len(t.pairs) + 1, result["count"]))
-            diff_lines = [l for l in result["diff"]
-                          if l[:1] in "+-" and l[:3] not in ("+++", "---")]
-            # 期望：改 1 行（-/+ 各一）+ 新增 1 行 = 3
-            if len(diff_lines) != 3:
-                problems.append("diff 应为 3 行（改 1 加 1），实际 %d 行：%r"
-                                % (len(diff_lines), diff_lines[:6]))
-            print("②c 最小 diff : %d 行改动（期望 3：改 1 -/+、新增 1 +）"
-                  % len(diff_lines))
-            if result.get("backup") and not os.path.isfile(result["backup"]):
-                problems.append("备份文件没生成")
+                                % (len(t.pairs) + 2, result["count"]))
 
+            # 逐文件 diff 断言**按改动键集合**，不按行数 —— 行数会被逗号机制干扰：
+            # 新增的键若落在文件末尾，旧末行必须补一个逗号，于是合法地多出 1 行
+            # 「+（同一个键、只多了个逗号）」。这正是最小 diff 的边界，不是 bug。
+            added_keys, removed_keys = set(), set()
+            for item in result["diffs"]:
+                for line in item["diff"]:
+                    if line[:3] in ("+++", "---") or line[:1] not in "+-":
+                        continue
+                    key = key_of_diff_line(line)
+                    if key is None:
+                        continue
+                    (added_keys if line[:1] == "+" else removed_keys).add(key)
+            expect_add = {target, scoped_new, plain_new}
+            touched_files = {item["file"] for item in result["diffs"]}
+            expect_files = {tt.file_of_key[target], home_file(scoped_new),
+                            home_file(plain_new)}
+            print("②d 改动键     : + %d 个 / - %d 行，触达文件 %s"
+                  % (len(added_keys), len(removed_keys), sorted(touched_files)))
+            # 边界：新增键落在文件末尾时，旧末行补逗号，于是它成对出现在 - 与 + 里。
+            # 所以「- 行」允许有 1 个不在预期内的键，但它**必须同时出现在 + 里**
+            # （是重写，不是删除）—— 这一条正是「不会丢数据」的证明。
+            extra_del = removed_keys - expect_add
+            if target not in removed_keys:
+                problems.append("被编辑那条的旧行没出现在 diff 里：%r" % target)
+            if not extra_del <= added_keys:
+                problems.append("这些键的行被删掉却没重写回来（会丢数据）：%r"
+                                % sorted(extra_del - added_keys))
+            if len(extra_del) > 1 or len(added_keys - expect_add) > 1:
+                problems.append("改动行数超出「1 条编辑 + 2 条新增 + ≤1 处补逗号」："
+                                "+%r / -%r" % (sorted(added_keys - expect_add),
+                                               sorted(extra_del)))
+            if touched_files != expect_files:
+                problems.append("触达文件集不符：期望 %r，实际 %r"
+                                % (sorted(expect_files), sorted(touched_files)))
+            if result.get("backup") and not os.path.isdir(result["backup"]):
+                problems.append("备份目录没生成：%r" % result["backup"])
+
+            # 分类规则必须生效：新增的作用域键落到分类文件，而不是主表
+            if tt2.file_of_key.get(scoped_new) != home_file(scoped_new):
+                problems.append("新增的作用域键没落到分类文件：%r 在 %r"
+                                % (scoped_new, tt2.file_of_key.get(scoped_new)))
             # 落盘结果复核：未触碰的键，那一行必须逐字节不变。
-            # 注意必须**按键**比对而不是按行号 —— 新增键会让它后面的行整体位移一位。
-            # 也别再给 `line_of_key` 加偏移：它存的已经是行号（pairs 下标 + 1）。
-            tt2 = Table(os.path.join(tmp, "translation.json"))
+            # 必须**按键**比对而不是按行号 —— 新增键会让它后面的行整体位移。
             mutated = []
-            for key, _ in t.pairs:
-                if key == target:
-                    continue
-                old_line = t.lines[t.line_of_key[key]]
-                new_line = tt2.lines[tt2.line_of_key[key]]
-                if strip_comma(new_line) != strip_comma(old_line):
-                    mutated.append(key)
-            print("②d 未触碰行  : %d 行被动了（应为 0）" % len(mutated))
+            for rel in tt.files:
+                for index, (key, _) in enumerate(tt.file_pairs[rel]):
+                    if key in (target, scoped_new, plain_new):
+                        continue
+                    new_index = tt2.entry_index.get(key)
+                    if new_index is None:
+                        mutated.append((rel, key, "凭空消失"))
+                        continue
+                    new_rel = tt2.file_of_key[key]
+                    if strip_comma(tt2.file_lines[new_rel][new_index + 1]) != \
+                            strip_comma(tt.file_lines[rel][index + 1]):
+                        mutated.append((rel, key))
+            print("②e 未触碰行  : %d 行被动了（应为 0）" % len(mutated))
             if mutated:
                 problems.append("%d 行未触碰的表行被改写（例：%r）"
                                 % (len(mutated), mutated[:3]))
 
-        # ---- ③ 回滚路径：故意喂一个会破坏升序的「新增」之外的坏输入 ----
-        bad_result = tt.save({"不存在的键": "x"}, {}, [], os.path.join(tmp, "backups"))
-        print("③ 非法改动   : %s（应拒绝或跳过并提示）"
+            # ---- ③ 极端路径：把一个分类文件删空（应连同文件一起移除）----
+            victim = "templates.json"
+            if victim in tt2.files:
+                keys = [k for k, _ in tt2.file_pairs[victim]]
+                dropped = tt2.save({}, {}, keys, os.path.join(tmp, "backups"))
+                gone = not os.path.isfile(os.path.join(tmp_data, victim))
+                print("③a 删空分类文件 : ok=%s，%s 已移除=%s（删 %d 条）"
+                      % (dropped.get("ok"), victim, gone, len(keys)))
+                if not dropped.get("ok"):
+                    problems.append("删空整个分类文件失败：%s %s"
+                                    % (dropped.get("reason"), dropped.get("problems")))
+                elif not gone:
+                    problems.append("删空后 %s 仍留在磁盘上（会与 split_table.py 的布局检查打架）"
+                                    % victim)
+
+                # 再加回一条同类的键：文件必须被重建（走 created 分支）
+                back = tt2.save({}, {"~zzz-selftest": "\u4e2d\u6587\u6a21\u677f"}, [],
+                                os.path.join(tmp, "backups"))
+                rebuilt = os.path.isfile(os.path.join(tmp_data, victim))
+                print("③b 重建分类文件 : ok=%s，%s 已重建=%s"
+                      % (back.get("ok"), victim, rebuilt))
+                if not back.get("ok") or not rebuilt:
+                    problems.append("删空后再新增未能重建 %s：%s %s"
+                                    % (victim, back.get("reason"), back.get("problems")))
+            else:
+                print("③ 极端路径 : 跳过（临时副本里没有 %s）" % victim)
+
+        # ---- ④ 非法输入：既不存在的键编辑，必须跳过并给提示 ----
+        bad_result = tt2.save({"不存在的键": "x"}, {}, [], os.path.join(tmp, "backups"))
+        print("④ 非法改动   : %s（应拒绝或跳过并提示）"
               % ("已跳过" if bad_result.get("notes") or not bad_result.get("ok") else "无提示"))
         if bad_result.get("ok") and not bad_result.get("notes"):
             problems.append("非法键既没被拒绝也没给提示")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    # ---- ④ 真文件必须原封不动 ----
-    after = hashlib.md5(open(table_path, "rb").read()).hexdigest()
-    print("④ 真文件 md5 : %s（%s）" % (after[:12], "未改动" if after == before else "被改了！"))
+    # ---- ⑤ 真词表必须原封不动（整套布局，不只主表）----
+    after = _layout_md5(data_dir)
+    print("⑤ 真词表指纹 : %s（%s）" % (after[:12], "未改动" if after == before else "被改了！"))
     if after != before:
         problems.append("自检竟然修改了真词表")
 
@@ -1196,8 +1536,8 @@ def main():
     if args.selftest:
         return selftest(data_dir, plugin_dir)
 
-    if not os.path.isfile(os.path.join(data_dir, "translation.json")):
-        print("找不到词表：%s" % os.path.join(data_dir, "translation.json"))
+    if not table_files(data_dir):
+        print("找不到词表：%s（应至少有一个 translation.json）" % data_dir)
         return 2
 
     Handler.workspace = Workspace(data_dir, plugin_dir)
@@ -1207,15 +1547,18 @@ def main():
     print("=" * 66)
     print("  Nuclear Option 汉化词表审核台")
     print("=" * 66)
-    print("  词表       : %s" % os.path.join(data_dir, "translation.json"))
-    print("  条目       : %d 条（md5 %s）" % (meta["total"], meta["table_md5"][:12]))
+    print("  数据目录   : %s（%d 个分类文件）" % (data_dir, meta["table_file_count"]))
+    print("  条目       : %d 条（合并 md5 %s）" % (meta["total"], meta["table_md5"][:12]))
+    for item in meta["categories"]:
+        print("               %-14s %4d 条   %s"
+              % (item["label"], item["entries"], item["desc"]))
     print("  运行目录   : %s%s" % (plugin_dir,
                                    "" if meta["plugin_dir_exists"] else "  ← 不存在（部署会失败）"))
     print("  地址       : http://127.0.0.1:%d/" % port
           + ("   （%d 不可用，已顺延）" % args.port if shifted and port else ""))
     print()
     print("  提示：工具只在本机监听；写盘只发生在点「保存」时，且会先备份到")
-    print("        data/.backups/，保存后自动复核不变量，失败即回滚。")
+    print("        data/.backups/<时间戳>/，保存后自动复核不变量，失败即回滚。")
     print("     按 Ctrl+C 退出。")
     print("=" * 66)
     sys.stdout.flush()

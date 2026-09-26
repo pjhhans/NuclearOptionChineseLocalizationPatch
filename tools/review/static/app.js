@@ -66,6 +66,13 @@ function width(text) {
   return w;
 }
 
+// 词表按分类拆成多个文件，「第几行」在合并视图里没有意义 —— 列表里显示的是
+// 「这条落在哪个分类文件」。scopes/ 前缀对辨认帮助不大，去掉更好读。
+function shortFile(rel) {
+  if (!rel) return '—';
+  return String(rel).replace(/^scopes[\\/]/, '');
+}
+
 let toastTimer = null;
 function toast(message, kind) {
   const el = $('#toast');
@@ -125,7 +132,8 @@ function renderMeta() {
   const m = S.meta;
   $('#brandSub').textContent = m.data_dir;
   $('#pillTable').textContent =
-    '词表 ' + m.total + ' 条 · md5 ' + String(m.table_md5).slice(0, 10) + ' · ' + m.table_mtime;
+    '词表 ' + m.total + ' 条 / ' + (m.table_file_count || 1) + ' 个分类文件 · md5 ' +
+    String(m.table_md5).slice(0, 10) + ' · ' + m.table_mtime;
   const pill = $('#pillPlugin');
   pill.textContent = m.plugin_dir_exists ? '运行目录就绪' : '运行目录不存在';
   pill.className = 'pill ' + (m.plugin_dir_exists ? 'ok' : 'bad');
@@ -237,7 +245,7 @@ function renderGrid() {
     const show = isEdit ? S.pending.edits[row.key] : row.value;
     const wUp = row.w_dst > Math.max(row.w_src * 1.6, 8) ? ' up' : '';
     return '<tr data-key="' + esc(row.key) + '" class="' + classes.join(' ') + '">' +
-      '<td class="mono">' + row.line + '</td>' +
+      '<td class="mono c-line" title="' + esc(row.file) + '">' + esc(shortFile(row.file)) + '</td>' +
       '<td><span class="kind ' + row.kind + '">' +
         esc((S.meta.kind_labels || {})[row.kind] || row.kind) + '</span></td>' +
       '<td class="mono">' + esc(row.scope || '') + '</td>' +
@@ -293,8 +301,10 @@ function renderDetail() {
         esc((S.meta.kind_labels || {})[d.kind] || d.kind) + '</span>' +
       (isDel ? '<span class="tag high">待删除</span>' : '') +
     '</h3>' +
-    '<div class="dgroup"><label>键（第 ' + d.line + ' 行' +
-      (d.scope ? ' · 作用域 ' + esc(d.scope) : '') + '）</label>' +
+    '<div class="dgroup"><label>键（<span class="mono">' + esc(d.file) + ':' + d.line + '</span>' +
+      (d.scope ? ' · 作用域 ' + esc(d.scope) : '') +
+      (d.home !== d.file ? ' · <span class="warnInline">按规则应属 ' + esc(d.home) + '</span>' : '') +
+      '）</label>' +
       '<div class="keyBox">' + esc(disp(d.key)) + '</div></div>' +
 
     '<div class="dgroup"><label>原文' +
@@ -428,18 +438,28 @@ async function previewDiff() {
 function diffHtml(result) {
   const notes = (result.notes || []).length
     ? '<div class="card-note">提示：' + result.notes.map(esc).join('<br>') + '</div>' : '';
+  const groups = result.diffs || [];
+  const lines = groups.reduce((n, g) => n + g.diff.length, 0);
   const head = '<div class="stat">条目数 ' + result.old_count + ' → ' + result.new_count +
-    '　·　diff ' + result.diff.length + ' 行</div>';
-  if (!result.diff.length) return notes + head + '<p class="hint">没有实际改动。</p>';
-  const body = result.diff.map((line) => {
-    let cls = 'ctx';
-    if (line.startsWith('+++') || line.startsWith('---')) cls = 'hunk';
-    else if (line.startsWith('@@')) cls = 'hunk';
-    else if (line.startsWith('+')) cls = 'add';
-    else if (line.startsWith('-')) cls = 'del';
-    return '<span class="' + cls + '">' + esc(line) + '</span>';
+    '　·　触及 ' + groups.length + ' 个文件　·　diff ' + lines + ' 行</div>';
+  if (!groups.length) return notes + head + '<p class="hint">没有实际改动。</p>';
+  // 词表拆成多个分类文件后，diff 必须**按文件分组**：合并视图里行号没有意义，
+  // 也不该把几个文件的改动糊成一坨。
+  const body = groups.map((g) => {
+    const title = '<div class="dgroup"><label>' + esc(g.file) +
+      (g.created ? ' <span class="tag low">新建</span>' : '') +
+      (g.removed ? ' <span class="tag high">整个文件移除</span>' : '') +
+      '</label></div>';
+    const text = g.diff.map((line) => {
+      let cls = 'ctx';
+      if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) cls = 'hunk';
+      else if (line.startsWith('+')) cls = 'add';
+      else if (line.startsWith('-')) cls = 'del';
+      return '<span class="' + cls + '">' + esc(line) + '</span>';
+    }).join('');
+    return title + '<pre class="diff">' + text + '</pre>';
   }).join('');
-  return notes + head + '<pre class="diff">' + body + '</pre>';
+  return notes + head + body;
 }
 
 async function save() {
@@ -641,26 +661,40 @@ async function loadAudit() {
 // ---------------------------------------------------------------------------
 // 文件与部署
 // ---------------------------------------------------------------------------
+const ROLE_LABELS = {
+  repo: '仓库', plugin: '运行目录',
+  'repo-aux': '仓库附加', 'plugin-aux': '运行目录附加',
+};
+
 function renderFiles() {
-  const files = (S.meta && S.meta.files) || [];
-  $('#fileBody').innerHTML = files.map((f) => {
-    const repoTable = files.find((x) => x.label === '仓库词表');
-    const runTable = files.find((x) => x.label === '运行目录词表');
-    const mismatch = f.label === '运行目录词表' &&
-      repoTable && runTable && repoTable.md5 !== runTable.md5;
-    return '<tr><td>' + esc(f.label) + (mismatch ? ' <span class="tag mid">与仓库不一致</span>' : '') +
-      '</td>' +
-      '<td class="mono">' + (f.size == null ? '—' : (f.size / 1024).toFixed(1) + ' KB') + '</td>' +
+  const m = S.meta || {};
+  const files = m.files || [];
+  const repo = m.repo_signature || {};
+  const run = m.plugin_signature || {};
+  // 词表是**多文件**的，所以「是否已同步」要比整套签名，不能比单个文件。
+  const outOfSync = !!(repo.md5 && run.md5 && repo.md5 !== run.md5);
+  const rows = [];
+  if (outOfSync) {
+    rows.push('<tr><td colspan="4"><span class="tag mid">仓库与运行目录的词表不一致</span> ' +
+      '仓库 ' + repo.md5.slice(0, 12) + '（' + repo.files + ' 个文件）　·　运行目录 ' +
+      run.md5.slice(0, 12) + '（' + run.files + ' 个文件）　—— 在下方推一次，或直接构建。</td></tr>');
+  }
+  $('#fileBody').innerHTML = rows.concat(files.map((f) => {
+    const missing = f.size == null;
+    return '<tr><td><span class="role">' + esc(ROLE_LABELS[f.role] || f.role) + '</span> ' +
+      esc(f.rel) + (missing ? ' <span class="tag low">未同步</span>' : '') + '</td>' +
+      '<td class="mono">' + (missing ? '—' : (f.size / 1024).toFixed(1) + ' KB') + '</td>' +
       '<td class="mono">' + (f.md5 ? f.md5.slice(0, 16) : '—') + '</td>' +
       '<td class="mono">' + (f.mtime || '—') + '</td></tr>';
-  }).join('');
+  })).join('');
 }
 
 async function deploy() {
   const result = await post('/api/deploy');
   if (!result.ok) { $('#deployOut').textContent = '失败：' + result.reason; toast('同步失败', 'bad'); return; }
   $('#deployOut').textContent = result.results.map((r) =>
-    (r.changed ? '已更新  ' : '无变化  ') + r.file + '  ' + r.md5.slice(0, 12)).join('\n') +
+    (r.removed ? '已删除  ' : (r.changed ? '已更新  ' : '无变化  ')) + r.file +
+    (r.removed ? '' : '  ' + r.md5.slice(0, 12))).join('\n') +
     '\n\n完成于 ' + result.mtime;
   S.meta = await api('/api/meta');
   renderMeta();
@@ -691,9 +725,24 @@ function closeModal() { $('#modal').classList.remove('show'); }
 function renderHelp() {
   $('#helpBox').innerHTML = `
     <h3>这个工具做什么</h3>
-    <p>把 <code>data/translation.json</code>（约 4850 条）摊成可检索、可筛选、可编辑的界面，
-    并把它按风险标出来，让校对不必从头读一遍全表。它<b>只在本机运行</b>（127.0.0.1），
+    <p>把 <code>data/</code> 下的<b>整套分类词表</b>（约 4850 条）摊成可检索、可筛选、可编辑的
+    界面，并把它按风险标出来，让校对不必从头读一遍全表。它<b>只在本机运行</b>（127.0.0.1），
     只读打开、写盘必须显式点保存。</p>
+
+    <h3>词表为什么要拆成几个文件</h3>
+    <ul>
+      <li><code>translation.json</code> 通用词条、<code>templates.json</code> 整段模板、
+      <code>fragments.json</code> 拼接片段 —— 这三类与运行时索引结构一一对应
+      （通用表 / 模板表+指纹 / 三张片段表），拆开后每个文件只喂一种索引。</li>
+      <li><code>scopes/*.json</code> 是带 <code>[Scope]</code> 前缀的作用域词条，按**语义域**
+      分成界面控件 / 单位兵器 / 任务目标 / 座舱读数 / 地图战报 / 编辑器与多人。
+      它们独立成表，最热的通用表从 4600+ 条缩到约 2700 条。</li>
+      <li>这个界面把它们<b>合并成一份视图</b>给你 —— 「分类」在编辑时是透明的：
+      你只管改，新增的键会自动落到它该去的文件（列表第一列就是落点）。</li>
+      <li>合并视图里「第几行」没有意义，所以列里显示的是<b>所属文件</b>；
+      详情面板给的是 <code>文件:行号</code>。若某条显示「按规则应属 XXX」，
+      说明布局有漂移，跑 <code>tools/split_table.py --apply</code> 归位。</li>
+    </ul>
 
     <h3>审核动线（建议顺序）</h3>
     <ul>
@@ -721,11 +770,14 @@ function renderHelp() {
     <h3>写盘的安全边界</h3>
     <ul>
       <li>未编辑的键，那一行<b>逐字节不动</b> —— diff 精确等于你改的那几条，不给 review 添噪。</li>
-      <li>保存前自动备份到 <code>data/.backups/translation.json.&lt;时间戳&gt;</code>（留最近 20 份）。</li>
+      <li>保存前逐文件备份到 <code>data/.backups/&lt;时间戳&gt;/</code>（保持相对路径，留最近 20 份）。
+      回滚粒度是文件，所以只备份这一轮真正会动的那些。</li>
       <li>保存后立刻复核：合法 JSON、键仍按码点升序、无字面重复键、无 BOM、纯 LF、
-      行数与条目数一致、未触碰行未变。任一条不成立就<b>自动回滚</b>。</li>
-      <li>「保存后自动同步到运行目录」勾选后，保存成功会顺带把数据推到
-      <code>BepInEx/plugins/…</code>（只推数据，不碰 DLL）。</li>
+      行数与条目数一致、未触碰行未变、<b>词表文件集合</b>与预期一致。任一条不成立就<b>自动回滚</b>。</li>
+      <li>把某个分类文件删空会连同文件一起移除 —— 空文件会被 <code>split_table.py --check</code>
+      判成「残留旧文件」，两处口径必须一致。</li>
+      <li>「保存后自动同步到运行目录」勾选后，保存成功会顺带把整套数据推到
+      <code>BepInEx/plugins/…</code>（只推数据，不碰 DLL；且会清掉运行目录里已不存在的词表文件）。</li>
     </ul>
 
     <h3>注意：改了 DLL 就必须重启游戏</h3>

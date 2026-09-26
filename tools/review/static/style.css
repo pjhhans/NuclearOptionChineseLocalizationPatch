@@ -188,7 +188,15 @@ table.grid tbody tr.sel { background: var(--accentSoft); }
 table.grid tbody tr.dirty td { box-shadow: inset 3px 0 0 var(--accent); }
 table.grid tbody tr.todelete td { opacity: .5; text-decoration: line-through; }
 
-.c-line { width: 46px; }
+.c-line { width: 108px; }
+
+/* 文件归属标签（表格 / 详情里用），比正文小一号、弱化处理 */
+.role {
+  display: inline-block; font-size: 11px; line-height: 16px; padding: 0 5px;
+  border: 1px solid var(--line); border-radius: 4px; color: var(--text3);
+  margin-right: 5px; vertical-align: 1px;
+}
+.dgroup label .mono { color: var(--text2); }
 .c-kind { width: 74px; }
 .c-scope { width: 110px; }
 .c-w { width: 58px; }
