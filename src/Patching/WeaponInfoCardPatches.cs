@@ -74,8 +74,13 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 _statFields[i] = AccessTools.Field(type, StatFieldNames[i]);
         }
 
-        /// <summary>各值文本的数值列位置缓存（控件名 → x 像素），取所见标签宽度的最大值以对齐。</summary>
-        private static readonly Dictionary<string, float> _valueColX = new Dictionary<string, float>();
+        /// <summary>
+        /// 数值列位置缓存 —— <b>按 TMP 实例</b>（ConditionalWeakTable，随卡片实例回收）。
+        /// 不同信息卡（基地菜单 / 挂架面板）字号与宽度不同，跨卡共享列位会把大卡的
+        /// 列位套到小卡上（v6 实测：小卡数值被推进描述区）。
+        /// </summary>
+        private static readonly ConditionalWeakTable<TMP_Text, object> _valueColX =
+            new ConditionalWeakTable<TMP_Text, object>();
 
         [HarmonyPostfix]
         private static void Postfix(object __instance)
@@ -125,10 +130,14 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
                 string label = s.Substring(0, idx + 1);
                 float labelWidth = tmp.GetPreferredValues(label).x + 6f;
-                _valueColX.TryGetValue(tmp.name, out float pos);
+                float pos = 0f;
+                if (_valueColX.TryGetValue(tmp, out object boxed))
+                    pos = (float)boxed;
                 if (labelWidth > pos)
-                    pos = labelWidth;
-                _valueColX[tmp.name] = pos;
+                {
+                    _valueColX.Remove(tmp);
+                    _valueColX.Add(tmp, pos = labelWidth);
+                }
 
                 tmp.text = label + "<pos=" + Mathf.RoundToInt(pos) + ">" + s.Substring(idx + 1).TrimStart();
             }
@@ -284,11 +293,13 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 _degenerateFrames = 0;
 
                 ArrangeStatCells(id, instance);
+                FitDescription(id, desc);
 
+                float[] dp = WeaponInfoCardPatches.Pins["description"];
                 Diagnostics.Log.Info(string.Format(
                     "[信息卡·钉死] 实例 {0}{1}: image {2:F0}x{3:F0}@({4:F0},{5:F0}) info @({6:F0},{7:F0}) desc {8:F0}x{9:F0}@({10:F0},{11:F0})",
                     id, adapted ? "（与既有几何不一致，已自适应）" : "",
-                    img[2], img[3], img[0], img[1], inf[0], inf[1], des[2], des[3], des[0], des[1]));
+                    img[2], img[3], img[0], img[1], inf[0], inf[1], dp[2], dp[3], dp[0], dp[1]));
                 return;
             }
 
@@ -365,6 +376,45 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             _instStates[id] = state;
             Diagnostics.Log.Info("[信息卡·表格] 值单元格 " + state.Cells.Count + " 个，行内右移 " + ColumnGap + "px");
         }
+
+        /// <summary>参数表内容预留宽度（世界尺度，含最长参数串 + 余量）。</summary>
+        private const float ContentAllowance = 180f;
+
+        /// <summary>
+        /// 表格化后参数区变宽：若描述起点侵入参数区（窄卡，v6 实测挂架面板），
+        /// 右移描述并收窄宽度 —— <b>右缘保持不变</b>（多出的行数由描述区高度消化）。
+        /// 宽卡（基地菜单，描述本就在参数区右侧之外）不受影响。世界坐标比较，
+        /// 不依赖各控件锚点语义。
+        /// </summary>
+        private static void FitDescription(int id, RectTransform desc)
+        {
+            if (desc == null
+                || !_instStates.TryGetValue(id, out InstState st)
+                || !WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dpin))
+                return;
+
+            float scale = desc.lossyScale.x;
+            float paramsRight = float.MinValue;
+            foreach (StatCell c in st.Cells)
+                paramsRight = Mathf.Max(paramsRight, LeftWorldX(c.Rt));
+            paramsRight += ContentAllowance * scale;
+
+            float deltaWorld = paramsRight + 16f * scale - LeftWorldX(desc);
+            if (deltaWorld <= 0f)
+                return; // 宽卡：无需让位
+
+            float deltaLocal = deltaWorld / scale;
+            float newWidth = dpin[2] - deltaLocal;
+            if (newWidth < 160f)
+                newWidth = 160f;
+            WeaponInfoCardPatches.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
+            Diagnostics.Log.Info(string.Format("[信息卡·表格] 描述右移 {0:F0}、宽 {1:F0}→{2:F0} 适配参数表",
+                deltaLocal, dpin[2], newWidth));
+        }
+
+        /// <summary>矩形左缘的世界 x（position 是 pivot 世界坐标，需回退 pivot 占比）。</summary>
+        private static float LeftWorldX(RectTransform rt)
+            => rt.position.x - rt.pivot.x * rt.rect.width * rt.lossyScale.x;
 
         private static void ResetAll(object instance)
         {
