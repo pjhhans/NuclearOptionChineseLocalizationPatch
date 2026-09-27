@@ -354,6 +354,14 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             public float ParamShift; // 参数块整体平移量（世界 px，负=向左），供 FitDescription 修正
             public bool NoWeapon;    // 无武器模式：只钉描述（居中全宽）
             public float FittedRightContent = -1f; // 上次描述让位所依据的右格内容宽（变更才重算）
+
+            // —— 描述滚动视图（v19）：钉死矩形的作用对象从 desc 移交 Viewport ——
+            public RectTransform Viewport;   // 视口（钉死矩形 + RectMask2D 裁剪）
+            public RectTransform Scrollbar;  // 滚动条背景（视口右缘内侧）
+            public RectTransform Handle;     // 滑块
+            public float ScrollOffset;       // 当前滚动像素（内容顶端偏移）
+            public Transform OrigDescParent; // desc 原生父级/锚定（Reset 归还用）
+            public Vector2 OrigAnchorMin, OrigAnchorMax, OrigPivot, OrigPos, OrigSize;
         }
 
         private static readonly HashSet<int> _pinnedInstances = new HashSet<int>();
@@ -435,6 +443,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     _instStates[id] = new InstState { NoWeapon = true };
                     _degenerateFrames = 0;
                     PinDescriptionCentered(desc);
+                    InstallDescScroll(id, desc);
                     Diagnostics.Log.Info("[信息卡·钉死] 实例 " + id + "（无武器，描述居中全宽）");
                     return;
                 }
@@ -475,6 +484,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 ArrangeStatCells(id, instance);
                 AlignParamBlock(id, imageArea, infoArea);
                 FitDescription(id, desc);
+                InstallDescScroll(id, desc);
 
                 float[] dp = WeaponInfoCardPatches.Pins["description"];
                 Diagnostics.Log.Info(string.Format(
@@ -494,12 +504,15 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             }
             if (cur != null && cur.NoWeapon)
             {
-                if (desc != null)
+                RectTransform pinRt0 = cur.Viewport != null ? cur.Viewport : desc;
+                if (pinRt0 != null)
                 {
-                    ForceDescWrap(desc);
-                    GrowDescHeight(desc);
-                    WeaponInfoCardPatches.DetachFromLayout(desc);
-                    ApplyRect(desc, WeaponInfoCardPatches.Pins["description"]);
+                    WeaponInfoCardPatches.DetachFromLayout(pinRt0);
+                    ApplyRect(pinRt0, WeaponInfoCardPatches.Pins["description"]);
+                    if (cur.Viewport != null)
+                        UpdateDescScroll(cur, desc);
+                    else
+                        ForceDescWrap(desc);
                 }
                 return;
             }
@@ -515,30 +528,37 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 WeaponInfoCardPatches.DetachFromLayout(infoArea);
                 ApplyPos(infoArea, WeaponInfoCardPatches.Pins["infoArea"]); // 只钳位置（0 宽是本体设计）
             }
-            if (desc != null)
-            {
-                ForceDescWrap(desc);
-                GrowDescHeight(desc);
-                WeaponInfoCardPatches.DetachFromLayout(desc);
-                ApplyRect(desc, WeaponInfoCardPatches.Pins["description"]);
-            }
             if (_instStates.TryGetValue(id, out InstState st))
             {
                 ApplyCellLayout(id, st);
+
+                // 钉死矩形的作用对象：滚动视图安装后是视口（desc 是其中的滚动内容）
+                RectTransform pinRt = st.Viewport != null ? st.Viewport : desc;
+                if (pinRt != null)
+                {
+                    WeaponInfoCardPatches.DetachFromLayout(pinRt);
+                    ApplyRect(pinRt, WeaponInfoCardPatches.Pins["description"]);
+                    if (st.Viewport != null)
+                        UpdateDescScroll(st, desc);
+                    else
+                        ForceDescWrap(desc);
+                }
+
                 // 右格内容宽变化（极端数值如 15000000kg）→ 描述让位重算；正常数值不动
                 if (desc != null
                     && WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tgx)
                     && tgx.Length > 3 && tgx[3] != st.FittedRightContent)
                 {
                     st.FittedRightContent = tgx[3];
+                    st.ScrollOffset = 0f; // 换武器回到顶部
                     FitDescription(id, desc);
                 }
                 // 宽度漂移巡检：钉值与实际矩形不一致 = 渲染期有其它机制在改宽度（留证）
-                if (desc != null && WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dpw)
-                    && Mathf.Abs(desc.rect.width - dpw[2]) > 2f && _widthDrift.Add(id))
+                if (pinRt != null && WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dpw)
+                    && Mathf.Abs(pinRt.rect.width - dpw[2]) > 2f && _widthDrift.Add(id))
                     Diagnostics.Log.Info(string.Format(
                         "[信息卡·表格] 描述宽度漂移：实际 {0:F0} ≠ 钉值 {1:F0}（渲染期被改写）",
-                        desc.rect.width, dpw[2]));
+                        pinRt.rect.width, dpw[2]));
             }
 
             // —— 看门狗：激活却持续退化（图片/描述宽<1）→ 解除钉死重记 ——
@@ -664,22 +684,23 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         private const float ContentAllowance = 128f;
 
         /// <summary>
-        /// 描述右缘世界上限 = min(原生右缘, 父容器右缘 − 边距, 右侧相邻面板左缘 − 边距)。
+        /// 描述右缘外部上限 = min(父容器右缘 − 边距, 右侧相邻面板左缘 − 边距)。
         /// v15 实证：Darkener 同级<b>没有任何其它子项</b>（候选列表为空）——飞机统计面板
-        /// 在更高层级，故从 Darkener 父级起<b>逐级向上扫最多 3 级</b>（跳过包含本段的子树）。
+        /// 在更高层级，故从父级起<b>逐级向上扫最多 3 级</b>（跳过包含本段的子树）。
         /// 候选须在描述左缘右侧 120px 之外、与卡片垂直重叠、且高度 ≥ 卡片一半
         /// （排除上方的武器槽位短条），落选候选全量进日志。
+        /// 注意不再包含原生右缘：宽度直接延伸到外部边界（v19，卡片右段死空间交给描述）。
         /// </summary>
         private static float DescriptionRightLimitWorld(
-            RectTransform desc, float nativeRightWorld, float scale, float minLeftWorld, out string boundaryLog)
+            RectTransform prt, float scale, float minLeftWorld, out string boundaryLog)
         {
-            float rightWorld = nativeRightWorld;
+            float rightWorld = float.PositiveInfinity;
             boundaryLog = null;
-            if (!(desc.parent is RectTransform pr))
+            if (!(prt.parent is RectTransform pr))
                 return rightWorld;
 
             Rect prW = WorldRect(pr);
-            rightWorld = Mathf.Min(rightWorld, prW.xMax - 18f * scale);
+            rightWorld = prW.xMax - 18f * scale;
 
             string bestName = null;
             float bestLeft = float.PositiveInfinity;
@@ -723,13 +744,13 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         }
 
         /// <summary>maybeAncestor 是否为 startTransform 的祖先。</summary>
-        private static bool IsAncestorOf(Transform maybeAncestor, Transform startTransform)
+        private static bool IsAncestorOf(Transform maybeAncestor, Transform cursor)
         {
-            while (startTransform != null)
+            while (cursor != null)
             {
-                if (startTransform.parent == maybeAncestor)
+                if (cursor.parent == maybeAncestor)
                     return true;
-                startTransform = startTransform.parent;
+                cursor = cursor.parent;
             }
             return false;
         }
@@ -748,26 +769,178 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         }
 
         /// <summary>
-        /// 按渲染文本实际高度（textBounds）向下扩描述矩形、<b>顶缘固定</b>：
-        /// 宽度收窄后中文行数超原生高度（130px），文本垂直居中渲染时上下两头溢出
-        /// （2026-09-27 实测）。textBounds 反映最后一帧真实渲染的中文字形，
-        /// 不依赖 tmp.text（其常为英文原文，preferred 高度会低估）。惰性收缩防抖。
+        /// 安装描述滚动视图（v19，2026-09-27 用户需求「描述太长加个滚动条」）：
+        /// 视口（RectMask2D 裁剪）接管钉死矩形，desc 移入视口作滚动内容
+        /// （水平撑满、顶端对齐），右缘内侧挂 4~6px 滚动条。描述矩形高度不再
+        /// 随文本扩张 —— 上下溢出从结构上消除。滚轮滚动不依赖 EventSystem
+        /// （Update 里直接读指针位置，规避射线/输入系统差异）。
         /// </summary>
-        private static void GrowDescHeight(RectTransform desc)
+        private static void InstallDescScroll(int id, RectTransform desc)
         {
-            if (desc == null
-                || !(desc.GetComponent<TMP_Text>() is TMP_Text t)
-                || !WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dp))
+            if (desc == null || !_instStates.TryGetValue(id, out InstState st) || st.Viewport != null)
                 return;
-            float rendered = t.textBounds.size.y;
-            if (rendered <= 0f)
+            if (!(desc.parent is RectTransform parentRT))
+                return;
+
+            // 记录原生布局（Reset 归还用）
+            st.OrigDescParent = desc.parent;
+            st.OrigAnchorMin = desc.anchorMin;
+            st.OrigAnchorMax = desc.anchorMax;
+            st.OrigPivot = desc.pivot;
+            st.OrigPos = desc.anchoredPosition;
+            st.OrigSize = desc.sizeDelta;
+
+            int layer = desc.gameObject.layer;
+
+            // 视口：复制 desc 当前锚定方案（随后每帧按钉死值回放）
+            var vpGo = new GameObject("DescViewport", typeof(RectTransform), typeof(RectMask2D));
+            vpGo.layer = layer;
+            RectTransform vp = vpGo.GetComponent<RectTransform>();
+            vp.SetParent(parentRT, false);
+            vp.anchorMin = desc.anchorMin;
+            vp.anchorMax = desc.anchorMax;
+            vp.pivot = desc.pivot;
+            vp.anchoredPosition = desc.anchoredPosition;
+            vp.sizeDelta = desc.sizeDelta;
+            WeaponInfoCardPatches.DetachFromLayout(vp);
+            ApplyRect(vp, WeaponInfoCardPatches.Pins["description"]); // 立即对齐钉死矩形，防首帧闪烁
+
+            // 滚动条：视口右缘内侧（背景 + 滑块，手动驱动）
+            var barGo = new GameObject("DescScrollbar", typeof(RectTransform), typeof(Image));
+            barGo.layer = layer;
+            RectTransform bar = barGo.GetComponent<RectTransform>();
+            bar.SetParent(vp, false);
+            bar.anchorMin = new Vector2(1f, 0f);
+            bar.anchorMax = new Vector2(1f, 1f);
+            bar.pivot = new Vector2(1f, 0.5f);
+            bar.anchoredPosition = new Vector2(-2f, 0f);
+            bar.sizeDelta = new Vector2(6f, -8f);
+            Image barImg = bar.GetComponent<Image>();
+            barImg.color = new Color(0f, 0f, 0f, 0.35f);
+            barImg.raycastTarget = false;
+
+            var hGo = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+            hGo.layer = layer;
+            RectTransform handle = hGo.GetComponent<RectTransform>();
+            handle.SetParent(bar, false);
+            handle.anchorMin = new Vector2(0f, 1f);
+            handle.anchorMax = new Vector2(1f, 1f);
+            handle.pivot = new Vector2(0.5f, 1f);
+            handle.anchoredPosition = Vector2.zero;
+            handle.sizeDelta = new Vector2(0f, 40f);
+            Image hImg = handle.GetComponent<Image>();
+            hImg.color = new Color(0.62f, 0.78f, 0.62f, 0.9f);
+            hImg.raycastTarget = false;
+
+            // desc 移入视口：水平撑满（右缘内缩给滚动条让位）、顶端对齐滚动
+            desc.SetParent(vp, false);
+            desc.anchorMin = new Vector2(0f, 1f);
+            desc.anchorMax = new Vector2(1f, 1f);
+            desc.pivot = new Vector2(0.5f, 1f);
+            desc.anchoredPosition = Vector2.zero;
+            desc.sizeDelta = new Vector2(-20f, vp.rect.height);
+            if (desc.GetComponent<TMP_Text>() is TMP_Text dt)
+                dt.alignment = TextAlignmentOptions.Top; // 顶端对齐（水平保持居中观感）
+
+            st.Viewport = vp;
+            st.Scrollbar = bar;
+            st.Handle = handle;
+            st.ScrollOffset = 0f;
+            Diagnostics.Log.Info("[信息卡·表格] 描述滚动视图已安装（滚轮 + 滚动条）");
+        }
+
+        /// <summary>每帧滚动更新：内容高度 = max(视口高, 渲染文本高)，滚轮驱动偏移，滑块随动。</summary>
+        private static void UpdateDescScroll(InstState st, RectTransform desc)
+        {
+            if (st?.Viewport == null || desc == null)
+                return;
+            float vpH = st.Viewport.rect.height;
+            if (vpH < 10f)
+                return;
+
+            float textH = 0f;
+            if (desc.GetComponent<TMP_Text>() is TMP_Text t)
+                textH = t.textBounds.size.y; // 渲染文本真实高度（中文）；preferred 走英文原文会低估
+            if (textH <= 0f)
                 return; // 尚未首渲染
-            float wantH = Mathf.Max(dp[3], rendered + 10f);
-            if (wantH - dp[3] < 2f)
-                return; // 已够高（或缩幅可忽略，惰性收缩防抖）
-            float dh = wantH - dp[3];
-            dp[1] -= (1f - desc.pivot.y) * dh; // 顶缘固定：高度增量全部向下方伸展
-            dp[3] = wantH;
+
+            float contentH = Mathf.Max(vpH, textH + 8f);
+            Vector2 sd = desc.sizeDelta;
+            if (Mathf.Abs(sd.y - contentH) > 1f)
+                desc.sizeDelta = new Vector2(sd.x, contentH);
+
+            float maxScroll = Mathf.Max(0f, contentH - vpH);
+            if (maxScroll > 0f && _wheelOk)
+            {
+                try
+                {
+                    var canvas = st.Viewport.GetComponentInParent<Canvas>();
+                    var cam = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay
+                        ? canvas.worldCamera
+                        : null;
+                    if (RectTransformUtility.RectangleContainsScreenPoint(st.Viewport, Input.mousePosition, cam))
+                    {
+                        float wheel = Input.mouseScrollDelta.y;
+                        if (wheel > 0.001f)
+                            st.ScrollOffset -= 45f;
+                        else if (wheel < -0.001f)
+                            st.ScrollOffset += 45f;
+                    }
+                }
+                catch (System.InvalidOperationException)
+                {
+                    _wheelOk = false; // 新 Input System 环境无 legacy 轮询，静默停用滚轮
+                }
+            }
+            st.ScrollOffset = Mathf.Clamp(st.ScrollOffset, 0f, maxScroll);
+
+            Vector2 ap = desc.anchoredPosition;
+            if (Mathf.Abs(ap.y - st.ScrollOffset) > 0.25f)
+                desc.anchoredPosition = new Vector2(ap.x, st.ScrollOffset);
+
+            // 滑块随动（内容装得下时隐藏滚动条）
+            if (st.Scrollbar == null || st.Handle == null)
+                return;
+            bool show = maxScroll > 0f;
+            if (st.Scrollbar.gameObject.activeSelf != show)
+                st.Scrollbar.gameObject.SetActive(show);
+            if (!show)
+                return;
+            float barH = st.Scrollbar.rect.height;
+            float handleH = Mathf.Max(24f, barH * Mathf.Clamp01(vpH / contentH));
+            st.Handle.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, handleH);
+            float travel = Mathf.Max(1f, barH - handleH);
+            Vector2 hp = st.Handle.anchoredPosition;
+            Vector2 ht = new Vector2(hp.x, -(st.ScrollOffset / maxScroll) * travel);
+            if ((hp - ht).sqrMagnitude > 0.25f)
+                st.Handle.anchoredPosition = ht;
+        }
+
+        private static bool _wheelOk = true;
+
+        /// <summary>拆除滚动视图：desc 归还原生父级与锚定，销毁视口/滚动条（Reset 用）。</summary>
+        private static void TearDownScroll(InstState st, RectTransform desc)
+        {
+            if (st == null)
+                return;
+            if (st.Viewport == null)
+            {
+                st.Viewport = null; st.Scrollbar = null; st.Handle = null;
+                return;
+            }
+            if (desc != null)
+            {
+                desc.SetParent(st.OrigDescParent, false);
+                desc.anchorMin = st.OrigAnchorMin;
+                desc.anchorMax = st.OrigAnchorMax;
+                desc.pivot = st.OrigPivot;
+                desc.anchoredPosition = st.OrigPos;
+                desc.sizeDelta = st.OrigSize;
+            }
+            UnityEngine.Object.Destroy(st.Viewport.gameObject); // 滚动条是视口子级，一并销毁
+            st.Viewport = null;
+            st.Scrollbar = null;
+            st.Handle = null;
         }
 
         /// <summary>
@@ -782,7 +955,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 || !WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dpin))
                 return;
 
-            float scale = desc.lossyScale.x;
+            // 滚动视图安装后，钉死矩形的作用对象是视口（desc 只是其中的滚动内容）
+            RectTransform prt = st.Viewport != null ? st.Viewport : desc;
+            float scale = prt.lossyScale.x;
 
             // ① 禁自身 ContentSizeFitter —— v14 实测证据：钉死位置生效（文字起点对）
             //    但钉死宽度失效（文本折行点在 ~2 倍钉宽处）：布局引擎在渲染期按文本
@@ -817,19 +992,24 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             paramsRight += st.ParamShift;
             paramsRight += allowance * scale;
 
-            // 左缘 = max(原生, 参数右缘 + 间距)
-            float nativeLeftWorld = LeftWorldX(desc);
+            // 左缘 = max(钉死左缘, 参数右缘 + 间距)
+            float nativeLeftWorld = LeftWorldX(prt);
             float leftWorld = Mathf.Max(nativeLeftWorld, paramsRight + 10f * scale);
             float deltaLocal = (leftWorld - nativeLeftWorld) / scale;
 
-            float nativeRightWorld = nativeLeftWorld + dpin[2] * scale;
-            float rightWorld = DescriptionRightLimitWorld(desc, nativeRightWorld, scale, leftWorld, out string boundaryLog);
-            float newWidth = Mathf.Max(160f, (rightWorld - leftWorld) / scale);
+            // 右缘直接采纳外部边界（父容器/右侧面板），不再保留原生右缘 ——
+            // 把卡片右段死空间交给描述（日志实证：原生右缘 1824 vs 面板左缘 2154）。
+            // 描述矩形更宽 → 行数更少；残余超高由滚动视图消化（v19）。
+            float rightLimit = DescriptionRightLimitWorld(prt, scale, leftWorld, out string boundaryLog);
+            float newWidth = Mathf.Max(160f, (rightLimit - leftWorld) / scale);
             WeaponInfoCardPatches.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
 
+            WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tgL);
             Diagnostics.Log.Info(string.Format(
-                "[信息卡·表格] 描述适配：{0}；参数右缘 {1:F0}，左缘 {2:F0}→{3:F0}，宽 {4:F0}→{5:F0}",
-                boundaryLog ?? "无右侧面板", paramsRight, nativeLeftWorld, leftWorld, dpin[2], newWidth));
+                "[信息卡·表格] 描述适配：{0}；参数右缘 {1:F0}（allowance {2:F0} = max(posR+40, min(tg3 {3:F0}+8, 320))×scale {4:F2}），左缘 {5:F0}→{6:F0}，宽 {7:F0}→{8:F0}",
+                boundaryLog ?? "无右侧面板", paramsRight, allowance,
+                tgL != null && tgL.Length > 3 ? tgL[3] : -1f, scale,
+                nativeLeftWorld, leftWorld, dpin[2], newWidth));
         }
 
         /// <summary>
@@ -853,9 +1033,8 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             float leftWorld = desc.parent is RectTransform pr
                 ? WorldRect(pr).xMin + 12f * scale
                 : nativeLeftWorld;
-            float nativeRightWorld = nativeLeftWorld + dpin[2] * scale;
-            float rightWorld = DescriptionRightLimitWorld(desc, nativeRightWorld, scale, leftWorld, out string boundaryLog);
-            float newWidth = Mathf.Max(160f, (rightWorld - leftWorld) / scale);
+            float rightLimit = DescriptionRightLimitWorld(desc, scale, leftWorld, out string boundaryLog);
+            float newWidth = Mathf.Max(160f, (rightLimit - leftWorld) / scale);
             float deltaLocal = (leftWorld - nativeLeftWorld) / scale;
             WeaponInfoCardPatches.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
 
@@ -878,10 +1057,14 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         private static void ResetAll(object instance)
         {
             int id = RuntimeHelpers.GetHashCode(instance);
+            RectTransform descRt = WeaponInfoCardPatches._infoField?.GetValue(instance) is TMP_Text tt
+                ? tt.rectTransform
+                : null;
             if (_instStates.TryGetValue(id, out InstState st))
             {
                 foreach (StatCell c in st.Cells)
                     c.Rt.anchoredPosition = c.Orig; // 归还原位
+                TearDownScroll(st, descRt); // 描述归还原生父级/锚定，销毁视口与滚动条
                 _instStates.Remove(id);
             }
             // 表格几何保留（按实例冻结，跨 无武器↔有武器 模式抖动重钉不丢；实例销毁由
@@ -894,8 +1077,8 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 WeaponInfoCardPatches._imageAreaField?.GetValue(instance)));
             WeaponInfoCardPatches.UndetachFromLayout(WeaponInfoCardPatches.ToRect(
                 WeaponInfoCardPatches._infoAreaField?.GetValue(instance)));
-            if (WeaponInfoCardPatches._infoField?.GetValue(instance) is TMP_Text t)
-                WeaponInfoCardPatches.UndetachFromLayout(t.rectTransform);
+            if (descRt != null)
+                WeaponInfoCardPatches.UndetachFromLayout(descRt);
         }
 
         private static bool Differs(float[] a, float[] b)
