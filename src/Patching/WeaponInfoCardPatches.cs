@@ -1008,12 +1008,21 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     contentRight = maxLeft + tg[3] * cellScale;
             }
 
-            // 左缘 = 内容右缘 + 固定间距（常量，武器间不浮动）；无几何时保持现状。
-            // 上限 = 原生左缘 + 300：极端数值（1500000kg）让位但防吃满描述区。
+            // 左缘 = 内容右缘 + 固定间距（常量，武器间不浮动）+ 右移偏移；
+            // 无几何时保持现状。上限 = 原生左缘 + 300：极端数值（1500000kg）让位但防吃满描述区。
             float nativeLeftWorld = LeftWorldX(prt);
             float targetLeft = contentRight > float.MinValue
                 ? Mathf.Min(contentRight + DescGap, st.NativeDescLeftWorld + 300f)
                 : nativeLeftWorld;
+            // 描述整体右移（2026-09-27 用户裁决「向右偏 2~4%」，取屏幕宽 3%）：
+            // 只加在左缘目标上，右缘仍钳外部边界 —— 描述只收窄不右越，
+            // 内容右缘与滚动条的 10px 内缩关系不变，文本永不进入滚动条底下。
+            float shiftWorld = 0f;
+            if (contentRight > float.MinValue)
+            {
+                shiftWorld = Screen.width * DescShiftRatio / CanvasScaleOf(prt);
+                targetLeft += shiftWorld;
+            }
             float deltaLocal = (targetLeft - nativeLeftWorld) / scale;
 
             // 右缘直接采纳外部边界（父容器/右侧面板），不再保留原生右缘 ——
@@ -1024,15 +1033,26 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             st.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
 
             Diagnostics.Log.Info(string.Format(
-                "[信息卡·表格] 描述适配：{0}；内容右缘 {1:F0}（tg3 {2:F0}×cellScale {3:F2}），左缘 {4:F0}→{5:F0}（间距 {6:F0}），宽 {7:F0}→{8:F0}",
+                "[信息卡·表格] 描述适配：{0}；内容右缘 {1:F0}（tg3 {2:F0}×cellScale {3:F2}），左缘 {4:F0}→{5:F0}（间距 {6:F0}，右移 {7:F0}），宽 {8:F0}→{9:F0}",
                 boundaryLog ?? "无右侧面板", contentRight,
                 tg != null && tg.Length > 3 ? tg[3] : -1f,
                 st.Cells.Count > 0 ? st.Cells[st.Cells.Count - 1].Rt.lossyScale.x : scale,
-                nativeLeftWorld, targetLeft, targetLeft - contentRight, dpin[2], newWidth));
+                nativeLeftWorld, targetLeft, targetLeft - shiftWorld - contentRight, shiftWorld,
+                dpin[2], newWidth));
         }
 
         /// <summary>参数内容右缘与描述左缘的固定间距（世界 px，不随武器/缩放浮动）。</summary>
         private const float DescGap = 26f;
+
+        /// <summary>描述右移比例：屏幕宽 × 此比例（2026-09-27 用户裁决 2~4%，取中 3%）。</summary>
+        private const float DescShiftRatio = 0.03f;
+
+        /// <summary>屏幕 px → 世界 px 的换算系数（Overlay 画布 scaleFactor 即每单位像素数）。</summary>
+        private static float CanvasScaleOf(RectTransform rt)
+        {
+            Canvas cv = rt != null ? rt.GetComponentInParent<Canvas>() : null;
+            return cv != null && cv.scaleFactor > 0f ? cv.scaleFactor : 1f;
+        }
 
         /// <summary>
         /// 无武器分支：描述独占卡片全宽（左缘 = 卡片左缘 + 边距），右缘仍钳到

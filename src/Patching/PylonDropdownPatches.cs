@@ -188,6 +188,10 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 RectTransform popupRt = popup.transform as RectTransform;
                 if (popupRt == null) return;
 
+                // 滚轮驱动（2026-09-27 用户需求「下拉列表只能手拉，加滚轮」）：
+                // 必须在 firstLabel 早退之前挂——列表结构异常时滚轮也要能装上。
+                EnsureWheelDriver(popupRt);
+
                 // ---- 渲染侧诊断（保留：下轮若仍异常，两行日志对比可定位） ----
                 TMP_Text firstLabel = null;
                 string labelName = __instance.itemText != null ? __instance.itemText.name : "Item Label";
@@ -308,6 +312,20 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
         }
 
+        /// <summary>maybeAttach：弹出根上装/刷新滚轮驱动组件（随弹出列表销毁自毁，天然幂等）。</summary>
+        private static void EnsureWheelDriver(RectTransform popupRt)
+        {
+            var driver = popupRt.GetComponent<DropdownWheelDriver>();
+            if (driver == null)
+                driver = popupRt.gameObject.AddComponent<DropdownWheelDriver>();
+            driver.Popup = popupRt;
+            driver.Scroll = popupRt.GetComponentInChildren<ScrollRect>(false);
+            driver.Bar = driver.Scroll != null ? null : popupRt.GetComponentInChildren<Scrollbar>(false);
+            Diagnostics.Log.Debug(string.Format(
+                "[挂架下拉·滚轮] 驱动已装：ScrollRect={0}，Scrollbar 回落={1}",
+                driver.Scroll != null, driver.Bar != null));
+        }
+
         /// <summary>诊断转储：链上每个节点的 锚跨度/宽/sizeDelta.x/宽度控制组件。</summary>
         private static string DumpChain(List<RectTransform> chain)
         {
@@ -353,6 +371,54 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 popupRt.position += new Vector3(-overflowR, 0f, 0f);
             else if (overflowL > 0f)
                 popupRt.position += new Vector3(overflowL, 0f, 0f);
+        }
+    }
+
+    /// <summary>
+    /// 下拉弹出列表的滚轮驱动（2026-09-27 用户需求「武器选择下拉列表只能手拉」）：
+    /// 挂在弹出列表根上，Update 直接轮询指针位置与 <c>Input.mouseScrollDelta</c>，
+    /// <b>不依赖 EventSystem 派发 OnScroll</b>（游戏的输入模块不派发滚轮事件，
+    /// 这正是原生滚轮失效的根因假设——与 v19 描述滚轮同一哲学，轮询是兜底真相）。
+    /// 有 <see cref="ScrollRect"/> 走 verticalNormalizedPosition（拖动手感与滚动条联动），
+    /// 没有则回落到 <see cref="Scrollbar"/> 直接调 value。弹出列表 Hide 时随根销毁，
+    /// 每次 Show 重新挂载，天然幂等。指针不在列表上时不吃滚轮（不劫持其它 UI 滚动）。
+    /// </summary>
+    internal sealed class DropdownWheelDriver : MonoBehaviour
+    {
+        internal RectTransform Popup;
+        internal ScrollRect Scroll;
+        internal Scrollbar Bar;      // ScrollRect 缺失时的回落
+        private bool _inputOk = true;
+
+        private void Update()
+        {
+            if (Popup == null || !_inputOk)
+                return;
+            try
+            {
+                var canvas = Popup.GetComponentInParent<Canvas>();
+                var cam = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay
+                    ? canvas.worldCamera
+                    : null;
+                if (!RectTransformUtility.RectangleContainsScreenPoint(Popup, Input.mousePosition, cam))
+                    return;
+                float wheel = Input.mouseScrollDelta.y;
+                if (Mathf.Abs(wheel) < 0.001f)
+                    return;
+
+                // 步长按符号取固定比例（规避 mouseScrollDelta 量纲随平台/鼠标的不确定性）：
+                // 每次滚轮事件走列表高的 ~12%，连滚累积。
+                const float step = 0.12f;
+                float delta = wheel > 0f ? step : -step;
+                if (Scroll != null)
+                    Scroll.verticalNormalizedPosition = Mathf.Clamp01(Scroll.verticalNormalizedPosition + delta);
+                else if (Bar != null)
+                    Bar.value = Mathf.Clamp01(Bar.value + delta); // 已规范化为 BottomToTop，value 大 = 顶端
+            }
+            catch (System.InvalidOperationException)
+            {
+                _inputOk = false; // 新 Input System 环境无 legacy 轮询，静默停用（防刷异常）
+            }
         }
     }
 }
