@@ -326,16 +326,24 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             return sb.ToString();
         }
 
-        /// <summary>列表加宽后越出画布时平移回屏内（展开方向由 TMP 的翻转逻辑决定）。</summary>
+        /// <summary>
+        /// 列表加宽后越出画布时平移回屏内（展开方向由 TMP 的翻转逻辑决定）。
+        /// v7 修正：边界用<strong>真正的画布根</strong>（向上走到最顶层 RectTransform），
+        /// 之前误用 popup 的直接父节点（= 下拉控件自身，仅 ~137px 宽），钳制时把
+        /// 整个列表推进了屏幕左缘外。
+        /// </summary>
         private static void ClampIntoCanvas(RectTransform popupRt)
         {
-            RectTransform canvasRt = popupRt.parent as RectTransform;
-            if (canvasRt == null) return;
+            Transform root = popupRt;
+            while (root.parent != null && root.parent is RectTransform)
+                root = root.parent;
+            RectTransform boundsRt = root as RectTransform;
+            if (boundsRt == null || boundsRt == popupRt) return;
 
             Vector3[] c = new Vector3[4];
             Vector3[] cc = new Vector3[4];
             popupRt.GetWorldCorners(c);
-            canvasRt.GetWorldCorners(cc);
+            boundsRt.GetWorldCorners(cc);
 
             float overflowR = c[2].x - cc[2].x;
             float overflowL = cc[0].x - c[0].x;
