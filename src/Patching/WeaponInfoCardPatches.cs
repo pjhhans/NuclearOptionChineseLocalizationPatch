@@ -181,6 +181,12 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     }
                     sb.Append(' ');
                 }
+                // 描述的换行/溢出模式与矩形现状——间歇溢出的机制留证
+                if (WeaponInfoCardPatches._infoField?.GetValue(__instance) is TMP_Text di && di.rectTransform != null)
+                    sb.Append("|| desc=").Append(di.name)
+                      .Append(" wrap=").Append(di.enableWordWrapping)
+                      .Append(" mode=").Append(di.overflowMode)
+                      .AppendFormat(" rect={0:F0}x{1:F0}", di.rectTransform.rect.width, di.rectTransform.rect.height);
                 Diagnostics.Log.Info("[信息卡·原文] " + sb.ToString());
             }
 
@@ -227,14 +233,14 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 {
                     // 无标签的纯值文本（如制导）：计入左格内容宽度（决定右列起点）
                     if (kv.Value == 0)
-                        colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 10f);
+                        colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 8f);
                     continue;
                 }
                 float labelW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs) + pad;
                 if (kv.Value == 0)
                 {
                     posLeft = Mathf.Max(posLeft, labelW);
-                    colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 10f);
+                    colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 8f);
                 }
                 else
                 {
@@ -244,7 +250,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             posLeft = Mathf.Round(posLeft);
             posRight = Mathf.Round(posRight);
-            colC = Mathf.Clamp(Mathf.Round(colC), 145f, 280f);
+            colC = Mathf.Clamp(Mathf.Round(colC), 116f, 224f); // 参数区再收 1/5（2026-09-27 用户裁决）
             TableGeom[id] = new[] { posLeft, posRight, colC };
 
             // 第二遍：把显示文本（含每列共享列位标签）写回 —— 已是中文，
@@ -307,7 +313,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
     internal static class WeaponInfoCardStabilizer
     {
         /// <summary>无表格几何时的右列起点回落值（局部 px，相对行左缘）。</summary>
-        private const float FallbackColC = 160f;
+        private const float FallbackColC = 128f;
 
         private sealed class StatCell
         {
@@ -464,6 +470,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             {
                 if (desc != null)
                 {
+                    ForceDescWrap(desc);
                     WeaponInfoCardPatches.DetachFromLayout(desc);
                     ApplyRect(desc, WeaponInfoCardPatches.Pins["description"], setHeight: false);
                 }
@@ -483,6 +490,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             }
             if (desc != null)
             {
+                ForceDescWrap(desc);
                 WeaponInfoCardPatches.DetachFromLayout(desc);
                 ApplyRect(desc, WeaponInfoCardPatches.Pins["description"], setHeight: false);
             }
@@ -608,16 +616,18 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 deltaWorld / infoArea.lossyScale.x, ParamGap));
         }
 
-        /// <summary>参数表内容预留宽度（世界尺度，含最长参数串 + 余量）。</summary>
-        private const float ContentAllowance = 160f;
+        /// <summary>参数表内容预留宽度（世界尺度，含最长参数串 + 余量）。随参数区收窄同步 -20%。</summary>
+        private const float ContentAllowance = 128f;
 
         /// <summary>
         /// 描述右缘世界上限 = min(原生右缘, 父容器右缘 − 边距, 右侧相邻面板左缘 − 边距)。
-        /// （v12 实测：Darkener 宽 1170 比描述矩形还宽——武器卡背景横跨到
-        /// 飞机统计面板底下，父容器钳制无效；真正的边界是右侧面板的左缘。）
+        /// v15 实证：Darkener 同级<b>没有任何其它子项</b>（候选列表为空）——飞机统计面板
+        /// 在更高层级，故从 Darkener 父级起<b>逐级向上扫最多 3 级</b>（跳过包含本段的子树）。
+        /// 候选须在描述左缘右侧 120px 之外、与卡片垂直重叠、且高度 ≥ 卡片一半
+        /// （排除上方的武器槽位短条），落选候选全量进日志。
         /// </summary>
         private static float DescriptionRightLimitWorld(
-            RectTransform desc, float nativeRightWorld, float scale, out string boundaryLog)
+            RectTransform desc, float nativeRightWorld, float scale, float minLeftWorld, out string boundaryLog)
         {
             float rightWorld = nativeRightWorld;
             boundaryLog = null;
@@ -630,26 +640,31 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             string bestName = null;
             float bestLeft = float.PositiveInfinity;
             var candidates = new List<string>();
-            Transform gp = pr.parent;
-            if (gp != null)
+
+            Transform level = pr.parent;
+            for (int depth = 0; depth < 3 && level != null; depth++)
             {
-                foreach (Transform sib in gp)
+                foreach (Transform sib in level)
                 {
-                    if (sib == pr || !(sib is RectTransform sr) || !sr.gameObject.activeInHierarchy)
+                    if (!(sib is RectTransform sr) || !sr.gameObject.activeInHierarchy)
                         continue;
+                    if (sr == pr || IsAncestorOf(sr, pr))
+                        continue; // 跳过包含武器卡段的子树
                     Rect sw = WorldRect(sr);
-                    candidates.Add(string.Format("{0}[{1:F0}-{2:F0},y{3:F0}-{4:F0}]", sr.name, sw.xMin, sw.xMax, sw.yMin, sw.yMax));
-                    // 须在本段右侧 35% 之外、且与本段垂直重叠，才算「右侧相邻面板」
-                    // （0.5 时 v14 实测漏检：Darkener 宽 1170，中点 1562 越过了面板左缘 ~1940 之前的判断余量，
-                    // 放宽到 0.35 提高召回；落选候选全量进日志，选错下一轮有据可查）
-                    bool rightOf = sw.xMin > prW.xMin + prW.width * 0.35f;
+                    candidates.Add(string.Format("d{0}:{1}[{2:F0}-{3:F0},y{4:F0}-{5:F0}]",
+                        depth, sr.name, sw.xMin, sw.xMax, sw.yMin, sw.yMax));
+                    bool rightOf = sw.xMin > minLeftWorld + 120f * scale;
                     bool vOverlap = sw.yMin < prW.yMax - 2f && sw.yMax > prW.yMin + 2f;
-                    if (rightOf && vOverlap && sw.xMin < bestLeft)
+                    bool tallEnough = sw.height >= prW.height * 0.5f;
+                    if (rightOf && vOverlap && tallEnough && sw.xMin < bestLeft)
                     {
                         bestLeft = sw.xMin;
                         bestName = sr.name;
                     }
                 }
+                if (bestName != null)
+                    break;
+                level = level.parent;
             }
             if (bestName != null)
             {
@@ -661,6 +676,31 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 boundaryLog = "无右侧面板（候选: " + string.Join(" | ", candidates) + "）";
             }
             return rightWorld;
+        }
+
+        /// <summary>maybeAncestor 是否为 startTransform 的祖先。</summary>
+        private static bool IsAncestorOf(Transform maybeAncestor, Transform startTransform)
+        {
+            while (startTransform != null)
+            {
+                if (startTransform.parent == maybeAncestor)
+                    return true;
+                startTransform = startTransform.parent;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 每帧巡检：描述换行若被运行时关闭（切武器 DisplayInfo 重跑的嫌疑）立即恢复。
+        /// v15 实证：钉死时刻换行是开的（无「强制」日志），实机仍间歇溢出 → 状态事后被改。
+        /// </summary>
+        private static void ForceDescWrap(RectTransform desc)
+        {
+            if (desc != null && desc.GetComponent<TMP_Text>() is TMP_Text t && !t.enableWordWrapping)
+            {
+                t.enableWordWrapping = true;
+                Diagnostics.Log.Info("[信息卡·表格] 描述换行被运行时关闭，已恢复（每帧巡检）");
+            }
         }
 
         /// <summary>
@@ -700,7 +740,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             // 参数区右缘（世界）：格左缘最大值 + 参数块整体平移 + 内容预留
             float allowance = WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tg)
-                ? tg[1] + 50f
+                ? tg[1] + 40f
                 : ContentAllowance;
             float paramsRight = float.MinValue;
             foreach (StatCell c in st.Cells)
@@ -714,7 +754,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             float deltaLocal = (leftWorld - nativeLeftWorld) / scale;
 
             float nativeRightWorld = nativeLeftWorld + dpin[2] * scale;
-            float rightWorld = DescriptionRightLimitWorld(desc, nativeRightWorld, scale, out string boundaryLog);
+            float rightWorld = DescriptionRightLimitWorld(desc, nativeRightWorld, scale, leftWorld, out string boundaryLog);
             float newWidth = Mathf.Max(160f, (rightWorld - leftWorld) / scale);
             WeaponInfoCardPatches.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
 
@@ -741,11 +781,11 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 Diagnostics.Log.Info("[信息卡·表格] 无武器：描述 ContentSizeFitter 已禁用");
             }
             float nativeLeftWorld = LeftWorldX(desc);
-            float nativeRightWorld = nativeLeftWorld + dpin[2] * scale;
-            float rightWorld = DescriptionRightLimitWorld(desc, nativeRightWorld, scale, out string boundaryLog);
             float leftWorld = desc.parent is RectTransform pr
                 ? WorldRect(pr).xMin + 12f * scale
                 : nativeLeftWorld;
+            float nativeRightWorld = nativeLeftWorld + dpin[2] * scale;
+            float rightWorld = DescriptionRightLimitWorld(desc, nativeRightWorld, scale, leftWorld, out string boundaryLog);
             float newWidth = Mathf.Max(160f, (rightWorld - leftWorld) / scale);
             float deltaLocal = (leftWorld - nativeLeftWorld) / scale;
             WeaponInfoCardPatches.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
