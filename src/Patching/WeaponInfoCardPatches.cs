@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
@@ -8,26 +9,21 @@ using UnityEngine.UI;
 namespace NuclearOptionChineseLocalizationPatch.Patching
 {
     /// <summary>
-    /// 基地武器信息卡（<c>AircraftSelectionMenu.DisplayInfo</c>）的几何稳定化 v4。
+    /// 基地武器信息卡（<c>AircraftSelectionMenu.DisplayInfo</c>）的几何稳定化 v5。
     ///
-    /// <para><b>实证结构（v3 首记父级转储）：</b><c>Darkener</c>（带 LayoutGroup）下三个子项：
-    /// <c>[0] WeaponImage</c>（图片区）、<c>[1] WeaponInfo</c>（参数区，**宽度恒为 0**——
-    /// 行容器 200px 自管宽度从容器向右伸出，钳制其尺寸必然压瘪/清零）、
-    /// <c>[2] Description</c>（描述，即 <c>info</c> TMP）。</para>
+    /// <para><b>实证结构：</b><c>Darkener</c>（LayoutGroup）下三个子项：
+    /// <c>[0] WeaponImage</c>（图片区）、<c>[1] WeaponInfo</c>（参数区，宽度恒为 0 是本体设计，
+    /// 行容器自管宽度）、<c>[2] Description</c>（= <c>info</c> TMP）。
+    /// 每次打开菜单游戏都会新建 <c>SelectionMenu(Clone)</c>（LogOutput 多实例实证）。</para>
     ///
-    /// <para><b>v3 失败根因（LogOutput 实证）：</b>在 DisplayInfo 同帧（布局引擎尚未运行）
-    /// 首记，<c>infoArea</c> 记到垃圾值 <c>0x110 @ (0,0)</c> → 位置钳到容器原点（参数块
-    /// 跑到面板外压住「返回」）、宽度钳到 0。</para>
+    /// <para><b>v4 失败根因：</b>全局几何表对「新建实例」盲目回放 —— 新实例首帧 rect
+    /// 还是预制体默认值就被 detach + 钉死，钉在错误状态（第二次打开图片与参数消失）。</para>
     ///
-    /// <para><b>v4 关键时序：</b>uGUI 布局重排发生在渲染期（willRenderCanvases），
-    /// <c>Update</c> 时 rect 反映上一帧的完整布局。因此全部几何操作移到
-    /// <see cref="WeaponInfoCardStabilizer"/>（钩本体已有的 Update）：
-    /// <b>同一帧先读三个子项的布局完好快照 → 有效性判定 → 统一 detach + 钉死</b>；
-    /// 渲染期布局引擎重排时三个子项均已 ignoreLayout，互不挪动。</para>
-    ///
-    /// <para><b>有效性判据：</b>图片区须激活且宽≥1；参数区/描述须激活且位于图片右侧
-    /// （防垃圾帧）；infoArea 只钳位置不碰尺寸；描述钳位置+宽度（高度交给本体）。
-    /// 分辨率变化清空几何表重记。核心不变量：<b>未成功首记绝不 detach</b>。</para>
+    /// <para><b>v5 策略：按实例钉死。</b>uGUI 布局重排在渲染期，Update 时 rect 为上一帧
+    /// 布局最终结果。每个新实例先完全不碰几何（原生布局），直到其自身满足有效性判据
+    /// （三者激活 + 图片宽≥1 + 参数/描述位于图片右侧），同帧读快照 → detach + 钉死。
+    /// 与既有全局几何对照，不一致则告警并自适应采用新值。
+    /// 看门狗：已钉实例激活却持续退化（图片/描述宽&lt;1）超过 60 帧 → 解除钉死重记。</para>
     /// </summary>
     [HarmonyPatch]
     internal static class WeaponInfoCardPatches
@@ -46,11 +42,8 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         internal static FieldInfo _weaponImageField; // Image：weaponImage（图标本体）
         internal static FieldInfo[] _statFields;
 
-        /// <summary>全局共享几何：控件键 → {x, y, w, h}。跨实例回放同一份。</summary>
+        /// <summary>最近一次钉死的几何（对照与回放基准）：键 → {x, y, w, h}。</summary>
         internal static readonly Dictionary<string, float[]> Pins = new Dictionary<string, float[]>();
-
-        internal static readonly HashSet<string> ParentDumped = new HashSet<string>();
-        internal static int ScreenW, ScreenH;
 
         private static IEnumerable<MethodBase> TargetMethods()
         {
@@ -124,7 +117,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             return null;
         }
 
-        /// <summary>控件脱离父级布局引擎（父级 LayoutGroup 跳过它）。只挂 ignoreLayout，不动 fitter。</summary>
+        /// <summary>控件脱离父级布局引擎（父级 LayoutGroup 跳过它）。</summary>
         internal static void DetachFromLayout(RectTransform rt)
         {
             LayoutElement le = rt.GetComponent<LayoutElement>();
@@ -134,38 +127,25 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 le.ignoreLayout = true;
         }
 
-        /// <summary>每键一次性输出父级与兄弟列表（Info 级），供后续迭代定位。</summary>
-        internal static void DumpParentOnce(RectTransform rt, string key)
+        /// <summary>归还父级布局引擎（看门狗/重置用）。</summary>
+        internal static void UndetachFromLayout(RectTransform rt)
         {
-            if (!ParentDumped.Add(key))
-                return;
-            Transform parent = rt.parent;
-            if (parent == null)
-                return;
-            var sb = new System.Text.StringBuilder("[信息卡·父级] ").Append(key).Append(" -> ").Append(parent.name);
-            int n = parent.childCount;
-            for (int i = 0; i < n; i++)
-            {
-                Transform child = parent.GetChild(i);
-                var crt = child as RectTransform;
-                sb.Append("\n  [").Append(i).Append("] ").Append(child.name);
-                if (crt != null)
-                    sb.Append(string.Format(" {0:F0}x{1:F0} active={2}",
-                        crt.rect.width, crt.rect.height, child.gameObject.activeSelf));
-                if (child.GetComponent<LayoutElement>() is LayoutElement le && le.ignoreLayout)
-                    sb.Append(" (ignored)");
-            }
-            Diagnostics.Log.Info(sb.ToString());
+            if (rt != null && rt.GetComponent<LayoutElement>() is LayoutElement le)
+                le.ignoreLayout = false;
         }
     }
 
     /// <summary>
     /// 几何稳定执行器：钩 <c>AircraftSelectionMenu.Update</c>（每帧，rect 为上一帧
-    /// 布局的最终结果）。同帧「读快照 → 判定 → detach + 钉死」，见 v4 类注释。
+    /// 布局的最终结果）。按实例「等待布局稳定 → 快照 → detach + 钉死」，见 v5 类注释。
     /// </summary>
     [HarmonyPatch]
     internal static class WeaponInfoCardStabilizer
     {
+        private static readonly HashSet<int> _pinnedInstances = new HashSet<int>();
+        private static int _degenerateFrames;
+        private static int _screenW, _screenH;
+
         private static IEnumerable<MethodBase> TargetMethods()
         {
             var type = AccessTools.TypeByName("AircraftSelectionMenu");
@@ -195,14 +175,17 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
         private static void Stabilize(object instance)
         {
-            // 分辨率变化 → 几何表全部失效重记（锚定坐标是父级局部像素值）
-            if (Screen.width != WeaponInfoCardPatches.ScreenW || Screen.height != WeaponInfoCardPatches.ScreenH)
+            int id = RuntimeHelpers.GetHashCode(instance);
+
+            // 分辨率变化 → 全部重来（锚定坐标是父级局部像素值）
+            if (Screen.width != _screenW || Screen.height != _screenH)
             {
-                if (WeaponInfoCardPatches.ScreenW != 0)
-                    Diagnostics.Log.Info("[信息卡] 分辨率变化，清空几何表重记");
-                WeaponInfoCardPatches.ScreenW = Screen.width;
-                WeaponInfoCardPatches.ScreenH = Screen.height;
-                WeaponInfoCardPatches.Pins.Clear();
+                if (_screenW != 0)
+                    Diagnostics.Log.Info("[信息卡] 分辨率变化，解除钉死重记");
+                _screenW = Screen.width;
+                _screenH = Screen.height;
+                ResetAll(instance);
+                return;
             }
 
             RectTransform imageArea = WeaponInfoCardPatches.ToRect(
@@ -221,61 +204,91 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             bool infValid = inf != null && imgValid && inf[0] >= img[0] + img[2] - 5f; // 参数须在图片右侧
             bool desValid = des != null && des[2] >= 1f && imgValid && des[0] >= img[0] + img[2] - 5f;
 
-            // —— 再统一 detach + 钉死 ——
+            if (!_pinnedInstances.Contains(id))
+            {
+                // 新实例：布局稳定前完全不碰几何（原生布局，绝不产生「钉错」）
+                if (!(imgValid && infValid && desValid))
+                    return;
+
+                bool adapted = WeaponInfoCardPatches.Pins.Count == 3 && (
+                    Differs(WeaponInfoCardPatches.Pins["imageArea"], img) ||
+                    Differs(WeaponInfoCardPatches.Pins["infoArea"], new[] { inf[0], inf[1], 0f, 0f }) ||
+                    Differs(WeaponInfoCardPatches.Pins["description"], des));
+
+                WeaponInfoCardPatches.Pins["imageArea"] = img;
+                WeaponInfoCardPatches.Pins["infoArea"] = new[] { inf[0], inf[1], 0f, 0f };
+                WeaponInfoCardPatches.Pins["description"] = des;
+
+                WeaponInfoCardPatches.DetachFromLayout(imageArea);
+                WeaponInfoCardPatches.DetachFromLayout(infoArea);
+                WeaponInfoCardPatches.DetachFromLayout(desc);
+
+                _pinnedInstances.Add(id);
+                if (_pinnedInstances.Count > 32)
+                {
+                    _pinnedInstances.Clear();
+                    _pinnedInstances.Add(id);
+                }
+                _degenerateFrames = 0;
+
+                Diagnostics.Log.Info(string.Format(
+                    "[信息卡·钉死] 实例 {0}{1}: image {2:F0}x{3:F0}@({4:F0},{5:F0}) info @({6:F0},{7:F0}) desc {8:F0}x{9:F0}@({10:F0},{11:F0})",
+                    id, adapted ? "（与既有几何不一致，已自适应）" : "",
+                    img[2], img[3], img[0], img[1], inf[0], inf[1], des[2], des[3], des[0], des[1]));
+                return;
+            }
+
+            // —— 已钉实例：确保脱离 + 每帧回放 ——
             if (imageArea != null)
             {
                 if (WeaponInfoCardPatches._weaponImageField?.GetValue(instance) is Image wimg && !wimg.preserveAspect)
-                    wimg.preserveAspect = true; // 钳宽后防不同纵横比图标变形
-
-                if (WeaponInfoCardPatches.Pins.TryGetValue("imageArea", out float[] pin))
-                {
-                    WeaponInfoCardPatches.DetachFromLayout(imageArea);
-                    ApplyRect(imageArea, pin);
-                }
-                else if (imgValid)
-                {
-                    WeaponInfoCardPatches.Pins["imageArea"] = img;
-                    WeaponInfoCardPatches.DetachFromLayout(imageArea);
-                    WeaponInfoCardPatches.DumpParentOnce(imageArea, "imageArea");
-                    Diagnostics.Log.Info(string.Format("[信息卡·首记] imageArea: {0:F0}x{1:F0} @ ({2:F0},{3:F0})",
-                        img[2], img[3], img[0], img[1]));
-                }
+                    wimg.preserveAspect = true;
+                WeaponInfoCardPatches.DetachFromLayout(imageArea);
+                ApplyRect(imageArea, WeaponInfoCardPatches.Pins["imageArea"]);
             }
-
             if (infoArea != null)
             {
-                if (WeaponInfoCardPatches.Pins.TryGetValue("infoArea", out float[] pin))
-                {
-                    WeaponInfoCardPatches.DetachFromLayout(infoArea);
-                    // 只钳位置：0 宽是本体设计（行容器自管宽度），碰尺寸必然压瘪
-                    ApplyPos(infoArea, pin);
-                }
-                else if (infValid)
-                {
-                    WeaponInfoCardPatches.Pins["infoArea"] = new[] { inf[0], inf[1], 0f, 0f };
-                    WeaponInfoCardPatches.DetachFromLayout(infoArea);
-                    WeaponInfoCardPatches.DumpParentOnce(infoArea, "infoArea");
-                    Diagnostics.Log.Info(string.Format("[信息卡·首记] infoArea 位置: @ ({0:F0},{1:F0})",
-                        inf[0], inf[1]));
-                }
+                WeaponInfoCardPatches.DetachFromLayout(infoArea);
+                ApplyPos(infoArea, WeaponInfoCardPatches.Pins["infoArea"]); // 只钳位置（0 宽是本体设计）
             }
-
             if (desc != null)
             {
-                if (WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] pin))
-                {
-                    WeaponInfoCardPatches.DetachFromLayout(desc);
-                    ApplyRect(desc, pin, setHeight: false); // 高度交给本体/自适应
-                }
-                else if (desValid)
-                {
-                    WeaponInfoCardPatches.Pins["description"] = des;
-                    WeaponInfoCardPatches.DetachFromLayout(desc);
-                    WeaponInfoCardPatches.DumpParentOnce(desc, "description");
-                    Diagnostics.Log.Info(string.Format("[信息卡·首记] description: {0:F0}x{1:F0} @ ({2:F0},{3:F0})",
-                        des[2], des[3], des[0], des[1]));
-                }
+                WeaponInfoCardPatches.DetachFromLayout(desc);
+                ApplyRect(desc, WeaponInfoCardPatches.Pins["description"], setHeight: false);
             }
+
+            // —— 看门狗：激活却持续退化（图片/描述宽<1）→ 解除钉死重记 ——
+            bool degenerate =
+                (imageArea != null && imageArea.gameObject.activeInHierarchy && imageArea.rect.width < 1f) ||
+                (desc != null && desc.gameObject.activeInHierarchy && desc.rect.width < 1f);
+            _degenerateFrames = degenerate ? _degenerateFrames + 1 : 0;
+            if (_degenerateFrames > 60)
+            {
+                Diagnostics.Log.Info("[信息卡] 几何持续退化，解除钉死重记");
+                ResetAll(instance);
+            }
+        }
+
+        private static void ResetAll(object instance)
+        {
+            WeaponInfoCardPatches.Pins.Clear();
+            _pinnedInstances.Clear();
+            _degenerateFrames = 0;
+            // 本实例控件归还布局引擎（其它实例随销毁消亡）
+            WeaponInfoCardPatches.UndetachFromLayout(WeaponInfoCardPatches.ToRect(
+                WeaponInfoCardPatches._imageAreaField?.GetValue(instance)));
+            WeaponInfoCardPatches.UndetachFromLayout(WeaponInfoCardPatches.ToRect(
+                WeaponInfoCardPatches._infoAreaField?.GetValue(instance)));
+            if (WeaponInfoCardPatches._infoField?.GetValue(instance) is TMP_Text t)
+                WeaponInfoCardPatches.UndetachFromLayout(t.rectTransform);
+        }
+
+        private static bool Differs(float[] a, float[] b)
+        {
+            for (int i = 0; i < 4; i++)
+                if (Mathf.Abs(a[i] - b[i]) > 1f)
+                    return true;
+            return false;
         }
 
         private static float[] Snapshot(RectTransform rt)
