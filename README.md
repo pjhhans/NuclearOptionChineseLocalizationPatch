@@ -60,7 +60,7 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
   词条保留（原文不出现即永不命中，无副作用）；若你实机见到这些界面仍是英文，欢迎反馈截图。
 
 **欢迎反馈。** 提交 issue 时附上截图。若想给作者一份完整的漏翻清单，  
-先在 `F11` 窗口里勾&#x4E0A;**「累积漏译到 missing.json / untranslated.json」**（默认关，见「配置」一节），  
+先在 `F11` 窗口里勾上**「累积漏译到 missing.json / untranslated.json」**（默认关，见「配置」一节），  
 它会把未命中的**片段**写进 `missing.json`、未命中的**整段长文本**写进 `untranslated.json`。  
 词表是纯 JSON，也直接接受译文 PR。
 
