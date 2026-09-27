@@ -42,9 +42,6 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         internal static FieldInfo _weaponImageField; // Image：weaponImage（图标本体）
         internal static FieldInfo[] _statFields;
 
-        /// <summary>最近一次钉死的几何（对照与回放基准）：键 → {x, y, w, h}。</summary>
-        internal static readonly Dictionary<string, float[]> Pins = new Dictionary<string, float[]>();
-
         private static IEnumerable<MethodBase> TargetMethods()
         {
             var type = AccessTools.TypeByName("AircraftSelectionMenu");
@@ -351,6 +348,15 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         private sealed class InstState
         {
             public readonly List<StatCell> Cells = new List<StatCell>();
+
+            /// <summary>本实例的钉死几何（键 → {x, y, w, h}，父级局部坐标）。
+            /// <b>按实例隔离</b>——旧版全局表被多个菜单克隆互相踩踏，重钉/重算
+            /// 从别实例改过的值起步累加，描述左缘棘轮式右爬（1309→1400 实证）。</summary>
+            public readonly Dictionary<string, float[]> Pins = new Dictionary<string, float[]>();
+
+            /// <summary>首次钉死时描述矩形的原生世界左缘（描述左缘绝对目标的下界基准）。</summary>
+            public float NativeDescLeftWorld = float.PositiveInfinity;
+
             public float ParamShift; // 参数块整体平移量（世界 px，负=向左），供 FitDescription 修正
             public bool NoWeapon;    // 无武器模式：只钉描述（居中全宽）
             public float FittedRightContent = -1f; // 上次描述让位所依据的右格内容宽（变更才重算）
@@ -437,12 +443,14 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 {
                     if (!desBase)
                         return;
-                    WeaponInfoCardPatches.Pins["description"] = des;
+                    var st0 = new InstState { NoWeapon = true };
+                    st0.NativeDescLeftWorld = LeftWorldX(desc);
+                    st0.Pins["description"] = des;
                     WeaponInfoCardPatches.DetachFromLayout(desc);
                     _pinnedInstances.Add(id);
-                    _instStates[id] = new InstState { NoWeapon = true };
+                    _instStates[id] = st0;
                     _degenerateFrames = 0;
-                    PinDescriptionCentered(desc);
+                    PinDescriptionCentered(st0, desc);
                     InstallDescScroll(id, desc);
                     Diagnostics.Log.Info("[信息卡·钉死] 实例 " + id + "（无武器，描述居中全宽）");
                     return;
@@ -452,15 +460,12 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 if (!desValid)
                     return;
 
-                bool adapted = WeaponInfoCardPatches.Pins.Count == 3 && (
-                    Differs(WeaponInfoCardPatches.Pins["imageArea"], img) ||
-                    Differs(WeaponInfoCardPatches.Pins["infoArea"], new[] { inf[0], inf[1] - 8f, 0f, 0f }) ||
-                    Differs(WeaponInfoCardPatches.Pins["description"], des));
-
-                WeaponInfoCardPatches.Pins["imageArea"] = img;
+                var st = new InstState();
+                st.NativeDescLeftWorld = LeftWorldX(desc);
+                st.Pins["imageArea"] = img;
                 // 参数区相对图片下移 8px（垂直居中对齐，2026-09-27 用户裁决）
-                WeaponInfoCardPatches.Pins["infoArea"] = new[] { inf[0], inf[1] - 8f, 0f, 0f };
-                WeaponInfoCardPatches.Pins["description"] = des;
+                st.Pins["infoArea"] = new[] { inf[0], inf[1] - 8f, 0f, 0f };
+                st.Pins["description"] = des;
 
                 WeaponInfoCardPatches.DetachFromLayout(imageArea);
                 WeaponInfoCardPatches.DetachFromLayout(infoArea);
@@ -479,18 +484,19 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     foreach (int k in stale)
                         WeaponInfoCardPatches.TableGeom.Remove(k);
                 }
+                _instStates[id] = st;
                 _degenerateFrames = 0;
 
-                ArrangeStatCells(id, instance);
+                ArrangeStatCells(st, instance, id);
                 AlignParamBlock(id, imageArea, infoArea);
+                ApplyPos(infoArea, st.Pins["infoArea"]); // 立即施加平移——FitDescription 现场量取的内容右缘必须含平移
                 FitDescription(id, desc);
                 InstallDescScroll(id, desc);
 
-                float[] dp = WeaponInfoCardPatches.Pins["description"];
+                float[] dp = st.Pins["description"];
                 Diagnostics.Log.Info(string.Format(
-                    "[信息卡·钉死] 实例 {0}{1}: image {2:F0}x{3:F0}@({4:F0},{5:F0}) info @({6:F0},{7:F0}) desc {8:F0}x{9:F0}@({10:F0},{11:F0})",
-                    id, adapted ? "（与既有几何不一致，已自适应）" : "",
-                    img[2], img[3], img[0], img[1], inf[0], inf[1], dp[2], dp[3], dp[0], dp[1]));
+                    "[信息卡·钉死] 实例 {0}: image {1:F0}x{2:F0}@({3:F0},{4:F0}) info @({5:F0},{6:F0}) desc {7:F0}x{8:F0}@({9:F0},{10:F0})",
+                    id, img[2], img[3], img[0], img[1], inf[0], inf[1], dp[2], dp[3], dp[0], dp[1]));
                 return;
             }
 
@@ -508,7 +514,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 if (pinRt0 != null)
                 {
                     WeaponInfoCardPatches.DetachFromLayout(pinRt0);
-                    ApplyRect(pinRt0, WeaponInfoCardPatches.Pins["description"]);
+                    ApplyRect(pinRt0, cur.Pins["description"]);
                     if (cur.Viewport != null)
                         UpdateDescScroll(cur, desc);
                     else
@@ -516,20 +522,22 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 }
                 return;
             }
+            if (cur == null)
+                return; // 已钉但状态缺失（不应发生），本帧跳过
             if (imageArea != null)
             {
                 if (WeaponInfoCardPatches._weaponImageField?.GetValue(instance) is Image wimg && !wimg.preserveAspect)
                     wimg.preserveAspect = true;
                 WeaponInfoCardPatches.DetachFromLayout(imageArea);
-                ApplyRect(imageArea, WeaponInfoCardPatches.Pins["imageArea"]);
+                ApplyRect(imageArea, cur.Pins["imageArea"]);
             }
             if (infoArea != null)
             {
                 WeaponInfoCardPatches.DetachFromLayout(infoArea);
-                ApplyPos(infoArea, WeaponInfoCardPatches.Pins["infoArea"]); // 只钳位置（0 宽是本体设计）
+                ApplyPos(infoArea, cur.Pins["infoArea"]); // 只钳位置（0 宽是本体设计）
             }
-            if (_instStates.TryGetValue(id, out InstState st))
             {
+                InstState st = cur;
                 ApplyCellLayout(id, st);
 
                 // 钉死矩形的作用对象：滚动视图安装后是视口（desc 是其中的滚动内容）
@@ -537,7 +545,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 if (pinRt != null)
                 {
                     WeaponInfoCardPatches.DetachFromLayout(pinRt);
-                    ApplyRect(pinRt, WeaponInfoCardPatches.Pins["description"]);
+                    ApplyRect(pinRt, st.Pins["description"]);
                     if (st.Viewport != null)
                         UpdateDescScroll(st, desc);
                     else
@@ -554,7 +562,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     FitDescription(id, desc);
                 }
                 // 宽度漂移巡检：钉值与实际矩形不一致 = 渲染期有其它机制在改宽度（留证）
-                if (pinRt != null && WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dpw)
+                if (pinRt != null && st.Pins.TryGetValue("description", out float[] dpw)
                     && Mathf.Abs(pinRt.rect.width - dpw[2]) > 2f && _widthDrift.Add(id))
                     Diagnostics.Log.Info(string.Format(
                         "[信息卡·表格] 描述宽度漂移：实际 {0:F0} ≠ 钉值 {1:F0}（渲染期被改写）",
@@ -579,7 +587,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// （行左缘 + colC）回放，与 &lt;pos&gt; 列位共同构成四列表格。
         /// 原位按实例记录，回放/重置均可逆。
         /// </summary>
-        private static void ArrangeStatCells(int id, object instance)
+        private static void ArrangeStatCells(InstState state, object instance, int id)
         {
             FieldInfo[] fields = WeaponInfoCardPatches._statFields;
             if (fields == null)
@@ -596,7 +604,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 list.Add(tmp.rectTransform);
             }
 
-            var state = new InstState();
+            state.Cells.Clear();
             foreach (KeyValuePair<Transform, List<RectTransform>> kv in byParent)
             {
                 List<RectTransform> cells = kv.Value;
@@ -617,7 +625,6 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     });
                 }
             }
-            _instStates[id] = state;
             ApplyCellLayout(id, state);
 
             string geom = WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tg)
@@ -657,7 +664,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         {
             if (imageArea == null || infoArea == null
                 || !_instStates.TryGetValue(id, out InstState st)
-                || !WeaponInfoCardPatches.Pins.TryGetValue("infoArea", out float[] pin))
+                || !st.Pins.TryGetValue("infoArea", out float[] pin))
                 return;
 
             float minLeft = float.MaxValue;
@@ -674,14 +681,11 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             if (Mathf.Abs(deltaWorld) < 2f)
                 return;
 
-            st.ParamShift = deltaWorld;
+            st.ParamShift = deltaWorld; // 记录平移量（诊断/追溯用；FitDescription 现场量取格位，不再引用）
             pin[0] += deltaWorld / infoArea.lossyScale.x;
             Diagnostics.Log.Info(string.Format("[信息卡·表格] 参数块平移 {0:F0}px 贴近图片（目标间距 {1:F0}px）",
                 deltaWorld / infoArea.lossyScale.x, ParamGap));
         }
-
-        /// <summary>参数表内容预留宽度（世界尺度，含最长参数串 + 余量）。随参数区收窄同步 -20%。</summary>
-        private const float ContentAllowance = 128f;
 
         /// <summary>
         /// 描述右缘外部上限 = min(父容器右缘 − 边距, 右侧相邻面板左缘 − 边距)。
@@ -803,7 +807,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             vp.anchoredPosition = desc.anchoredPosition;
             vp.sizeDelta = desc.sizeDelta;
             WeaponInfoCardPatches.DetachFromLayout(vp);
-            ApplyRect(vp, WeaponInfoCardPatches.Pins["description"]); // 立即对齐钉死矩形，防首帧闪烁
+            ApplyRect(vp, st.Pins["description"]); // 立即对齐钉死矩形，防首帧闪烁
 
             // 滚动条：视口右缘内侧（背景 + 滑块，手动驱动）
             var barGo = new GameObject("DescScrollbar", typeof(RectTransform), typeof(Image));
@@ -945,14 +949,15 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
         /// <summary>
         /// 描述区适配：① 强制自动换行（描述若 Overflow/禁换行，长行会在矩形右缘
-        /// 被裁字）；② 左缘让位参数区（max(原生左缘, 参数右缘+间距)）；
-        /// ③ 右缘钳到 <see cref="DescriptionRightLimitWorld"/>。世界坐标运算。
+        /// 被裁字）；② 左缘 = <b>绝对目标</b>「参数内容右缘 + <see cref="DescGap"/>」
+        /// （不随历史累积——旧版 max(上次值, …) 在多实例共享全局 Pins 时棘轮式右爬，
+        /// 1309→1400 实测）；③ 右缘钳到 <see cref="DescriptionRightLimitWorld"/>。世界坐标运算。
         /// </summary>
         private static void FitDescription(int id, RectTransform desc)
         {
             if (desc == null
                 || !_instStates.TryGetValue(id, out InstState st)
-                || !WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dpin))
+                || !st.Pins.TryGetValue("description", out float[] dpin))
                 return;
 
             // 滚动视图安装后，钉死矩形的作用对象是视口（desc 只是其中的滚动内容）
@@ -980,46 +985,63 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 Diagnostics.Log.Info("[信息卡·表格] 描述强制自动换行（修右缘溢出/裁字）");
             }
 
-            // 参数区右缘（世界）：格左缘最大值 + 参数块整体平移 + 内容预留。
-            // 基线 = tg[1]+40（固定，正常武器不抖动）；右格内容宽 tg[3] 超出基线时
-            // 让位（极端数值如 15000000kg），上限 320 防超长值吃满描述区。
-            float allowance = WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tg)
-                ? Mathf.Max(tg[1] + 40f, Mathf.Min((tg.Length > 3 ? tg[3] : 0f) + 8f, 320f))
-                : ContentAllowance;
-            float paramsRight = float.MinValue;
-            foreach (StatCell c in st.Cells)
-                paramsRight = Mathf.Max(paramsRight, LeftWorldX(c.Rt));
-            paramsRight += st.ParamShift;
-            paramsRight += allowance * scale;
+            // 参数内容右缘（世界）＝ 最右右格左缘 + 右格内容宽 × <b>格子自身缩放</b>。
+            // 旧版把格子局部量乘 desc 缩放（1.48）再加固定余量 —— 凭空多出 ~100px
+            // 且随武器宽窄浮动（「中间空隙有时多有时少」的主体）。
+            float contentRight = float.MinValue;
+            if (WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tg) && tg.Length > 3)
+            {
+                float maxLeft = float.MinValue;
+                float cellScale = scale;
+                foreach (StatCell c in st.Cells)
+                {
+                    if (c.Col != 1)
+                        continue;
+                    float l = LeftWorldX(c.Rt);
+                    if (l > maxLeft)
+                    {
+                        maxLeft = l;
+                        cellScale = c.Rt.lossyScale.x;
+                    }
+                }
+                if (maxLeft > float.MinValue)
+                    contentRight = maxLeft + tg[3] * cellScale;
+            }
 
-            // 左缘 = max(钉死左缘, 参数右缘 + 间距)
+            // 左缘 = 内容右缘 + 固定间距（常量，武器间不浮动）；无几何时保持现状。
+            // 上限 = 原生左缘 + 300：极端数值（1500000kg）让位但防吃满描述区。
             float nativeLeftWorld = LeftWorldX(prt);
-            float leftWorld = Mathf.Max(nativeLeftWorld, paramsRight + 10f * scale);
-            float deltaLocal = (leftWorld - nativeLeftWorld) / scale;
+            float targetLeft = contentRight > float.MinValue
+                ? Mathf.Min(contentRight + DescGap, st.NativeDescLeftWorld + 300f)
+                : nativeLeftWorld;
+            float deltaLocal = (targetLeft - nativeLeftWorld) / scale;
 
             // 右缘直接采纳外部边界（父容器/右侧面板），不再保留原生右缘 ——
             // 把卡片右段死空间交给描述（日志实证：原生右缘 1824 vs 面板左缘 2154）。
             // 描述矩形更宽 → 行数更少；残余超高由滚动视图消化（v19）。
-            float rightLimit = DescriptionRightLimitWorld(prt, scale, leftWorld, out string boundaryLog);
-            float newWidth = Mathf.Max(160f, (rightLimit - leftWorld) / scale);
-            WeaponInfoCardPatches.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
+            float rightLimit = DescriptionRightLimitWorld(prt, scale, targetLeft, out string boundaryLog);
+            float newWidth = Mathf.Max(160f, (rightLimit - targetLeft) / scale);
+            st.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
 
-            WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tgL);
             Diagnostics.Log.Info(string.Format(
-                "[信息卡·表格] 描述适配：{0}；参数右缘 {1:F0}（allowance {2:F0} = max(posR+40, min(tg3 {3:F0}+8, 320))×scale {4:F2}），左缘 {5:F0}→{6:F0}，宽 {7:F0}→{8:F0}",
-                boundaryLog ?? "无右侧面板", paramsRight, allowance,
-                tgL != null && tgL.Length > 3 ? tgL[3] : -1f, scale,
-                nativeLeftWorld, leftWorld, dpin[2], newWidth));
+                "[信息卡·表格] 描述适配：{0}；内容右缘 {1:F0}（tg3 {2:F0}×cellScale {3:F2}），左缘 {4:F0}→{5:F0}（间距 {6:F0}），宽 {7:F0}→{8:F0}",
+                boundaryLog ?? "无右侧面板", contentRight,
+                tg != null && tg.Length > 3 ? tg[3] : -1f,
+                st.Cells.Count > 0 ? st.Cells[st.Cells.Count - 1].Rt.lossyScale.x : scale,
+                nativeLeftWorld, targetLeft, targetLeft - contentRight, dpin[2], newWidth));
         }
+
+        /// <summary>参数内容右缘与描述左缘的固定间距（世界 px，不随武器/缩放浮动）。</summary>
+        private const float DescGap = 26f;
 
         /// <summary>
         /// 无武器分支：描述独占卡片全宽（左缘 = 卡片左缘 + 边距），右缘仍钳到
         /// 右侧相邻面板；描述文本本身居中对齐 ⇒ 视觉居中，长描述有最大宽度可用。
         /// </summary>
-        private static void PinDescriptionCentered(RectTransform desc)
+        private static void PinDescriptionCentered(InstState st, RectTransform desc)
         {
             if (desc == null
-                || !WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dpin))
+                || !st.Pins.TryGetValue("description", out float[] dpin))
                 return;
 
             float scale = desc.lossyScale.x;
@@ -1036,7 +1058,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             float rightLimit = DescriptionRightLimitWorld(desc, scale, leftWorld, out string boundaryLog);
             float newWidth = Mathf.Max(160f, (rightLimit - leftWorld) / scale);
             float deltaLocal = (leftWorld - nativeLeftWorld) / scale;
-            WeaponInfoCardPatches.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
+            st.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
 
             Diagnostics.Log.Info(string.Format(
                 "[信息卡·表格] 无武器：描述居中全宽，左缘 {0:F0}→{1:F0}，宽 {2:F0}→{3:F0} {4}",
@@ -1068,8 +1090,8 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 _instStates.Remove(id);
             }
             // 表格几何保留（按实例冻结，跨 无武器↔有武器 模式抖动重钉不丢；实例销毁由
-            // 钉死路径的 stale 清理回收）—— 清掉会让右列起点随武器重算而抖动
-            WeaponInfoCardPatches.Pins.Clear();
+            // 钉死路径的 stale 清理回收）—— 清掉会让右列起点随武器重算而抖动。
+            // 钉死几何（Pins）随 InstState 一并移除 —— 按实例隔离，无全局状态。
             _pinnedInstances.Clear();
             _degenerateFrames = 0;
             // 本实例控件归还布局引擎（其它实例随销毁消亡）
@@ -1079,14 +1101,6 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 WeaponInfoCardPatches._infoAreaField?.GetValue(instance)));
             if (descRt != null)
                 WeaponInfoCardPatches.UndetachFromLayout(descRt);
-        }
-
-        private static bool Differs(float[] a, float[] b)
-        {
-            for (int i = 0; i < 4; i++)
-                if (Mathf.Abs(a[i] - b[i]) > 1f)
-                    return true;
-            return false;
         }
 
         private static float[] Snapshot(RectTransform rt)
