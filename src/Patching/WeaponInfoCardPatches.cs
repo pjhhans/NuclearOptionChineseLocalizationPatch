@@ -218,51 +218,48 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 display[kv.Key] = d;
             }
 
-            // 表格几何<b>按实例冻结</b>（首个武器定版，之后不重算）：colC 计入数值宽，
-            // 数值随武器变化曾让右列起点每换一把武器抖一次（2026-09-27 用户实测）。
-            // 标签文本跨武器恒定（穿深:/RCS:/攻击距离:…），冻结不影响对齐。
-            float posLeft, posRight, colC;
-            if (TableGeom.TryGetValue(id, out float[] tgF))
+            // posLeft/posRight <b>每次实测</b>：个别槽位标签的出现与否随面板/武器形态变化
+            // （R: 仅部分形态有）——v17 的冻结把短标签的列位套到长标签上，&lt;pos&gt;
+            // 落进标签内部（2026-09-27 实测「攻击距离:100km」数值贴标签）。
+            // colC（右列起点，数值宽驱动）依旧按实例<b>单调冻结</b>（取 max，只增不减），
+            // 数值宽变化不再抖动；标签本身宽度恒定，跨武器对齐不受影响。
+            float posLeft = 0f, posRight = 0f, colC = 0f;
+            var ownLabel = new Dictionary<TMP_Text, float>();
+            foreach (KeyValuePair<TMP_Text, int> kv in cells)
             {
-                posLeft = tgF[0];
-                posRight = tgF[1];
-                colC = tgF[2];
-            }
-            else
-            {
-                posLeft = 0f;
-                posRight = 0f;
-                colC = 0f;
-                foreach (KeyValuePair<TMP_Text, int> kv in cells)
+                if (!display.TryGetValue(kv.Key, out string s))
+                    continue;
+                float fs = kv.Key.fontSize > 0f ? kv.Key.fontSize : 18f;
+                float pad = Mathf.Max(8f, fs * 0.5f); // 内边距收紧（缓解短标签行冒号后空白）
+                int idx = IndexOfColon(s);
+                if (idx < 0)
                 {
-                    if (!display.TryGetValue(kv.Key, out string s))
-                        continue;
-                    float fs = kv.Key.fontSize > 0f ? kv.Key.fontSize : 18f;
-                    float pad = Mathf.Max(8f, fs * 0.5f); // 内边距收紧（缓解短标签行冒号后空白）
-                    int idx = IndexOfColon(s);
-                    if (idx < 0)
-                    {
-                        // 无标签的纯值文本（如制导）：计入左格内容宽度（决定右列起点）
-                        if (kv.Value == 0)
-                            colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 8f);
-                        continue;
-                    }
-                    float labelW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs) + pad;
+                    // 无标签的纯值文本（如制导）：计入左格内容宽度（决定右列起点）
                     if (kv.Value == 0)
-                    {
-                        posLeft = Mathf.Max(posLeft, labelW);
                         colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 8f);
-                    }
-                    else
-                    {
-                        posRight = Mathf.Max(posRight, labelW);
-                    }
+                    continue;
                 }
-
-                posLeft = Mathf.Round(posLeft);
-                posRight = Mathf.Round(posRight);
-                colC = Mathf.Clamp(Mathf.Round(colC), 116f, 224f); // 参数区再收 1/5（2026-09-27 用户裁决）
+                float ownW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs);
+                ownLabel[kv.Key] = ownW;
+                float labelW = ownW + pad;
+                if (kv.Value == 0)
+                {
+                    posLeft = Mathf.Max(posLeft, labelW);
+                    colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 8f);
+                }
+                else
+                {
+                    posRight = Mathf.Max(posRight, labelW);
+                }
             }
+
+            posLeft = Mathf.Round(posLeft);
+            posRight = Mathf.Round(posRight);
+            float colCMeas = Mathf.Clamp(Mathf.Round(colC), 116f, 224f); // 参数区收 1/5（2026-09-27 用户裁决）
+            if (TableGeom.TryGetValue(id, out float[] tgF) && tgF.Length > 2)
+                colC = Mathf.Max(tgF[2], colCMeas);
+            else
+                colC = colCMeas;
 
             // 右格内容宽（含数值）<b>每次实测</b>：极端数值（如 15000000kg，本体疑似数据错误）
             // 会插进描述 —— 超出基线时由 FitDescription 让位；正常数值与基线相近不触发
@@ -286,7 +283,10 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 int idx = IndexOfColon(s);
                 if (idx < 0)
                     continue;
-                float pos = kv.Value == 0 ? posLeft : posRight;
+                // 列共享位与「自身标签 + 6px」取大者：列位永不落进本格标签内部
+                float colPos = kv.Value == 0 ? posLeft : posRight;
+                float own = ownLabel.TryGetValue(kv.Key, out float ow) ? ow : 0f;
+                float pos = Mathf.Max(colPos, own + 6f);
                 kv.Key.text = s.Substring(0, idx + 1) + "<pos=" + Mathf.RoundToInt(pos) + ">"
                     + s.Substring(idx + 1).TrimStart();
             }
@@ -497,8 +497,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 if (desc != null)
                 {
                     ForceDescWrap(desc);
+                    GrowDescHeight(desc);
                     WeaponInfoCardPatches.DetachFromLayout(desc);
-                    ApplyRect(desc, WeaponInfoCardPatches.Pins["description"], setHeight: false);
+                    ApplyRect(desc, WeaponInfoCardPatches.Pins["description"]);
                 }
                 return;
             }
@@ -517,8 +518,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             if (desc != null)
             {
                 ForceDescWrap(desc);
+                GrowDescHeight(desc);
                 WeaponInfoCardPatches.DetachFromLayout(desc);
-                ApplyRect(desc, WeaponInfoCardPatches.Pins["description"], setHeight: false);
+                ApplyRect(desc, WeaponInfoCardPatches.Pins["description"]);
             }
             if (_instStates.TryGetValue(id, out InstState st))
             {
@@ -743,6 +745,29 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 t.enableWordWrapping = true;
                 Diagnostics.Log.Info("[信息卡·表格] 描述换行被运行时关闭，已恢复（每帧巡检）");
             }
+        }
+
+        /// <summary>
+        /// 按渲染文本实际高度（textBounds）向下扩描述矩形、<b>顶缘固定</b>：
+        /// 宽度收窄后中文行数超原生高度（130px），文本垂直居中渲染时上下两头溢出
+        /// （2026-09-27 实测）。textBounds 反映最后一帧真实渲染的中文字形，
+        /// 不依赖 tmp.text（其常为英文原文，preferred 高度会低估）。惰性收缩防抖。
+        /// </summary>
+        private static void GrowDescHeight(RectTransform desc)
+        {
+            if (desc == null
+                || !(desc.GetComponent<TMP_Text>() is TMP_Text t)
+                || !WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dp))
+                return;
+            float rendered = t.textBounds.size.y;
+            if (rendered <= 0f)
+                return; // 尚未首渲染
+            float wantH = Mathf.Max(dp[3], rendered + 10f);
+            if (wantH - dp[3] < 2f)
+                return; // 已够高（或缩幅可忽略，惰性收缩防抖）
+            float dh = wantH - dp[3];
+            dp[1] -= (1f - desc.pivot.y) * dh; // 顶缘固定：高度增量全部向下方伸展
+            dp[3] = wantH;
         }
 
         /// <summary>
