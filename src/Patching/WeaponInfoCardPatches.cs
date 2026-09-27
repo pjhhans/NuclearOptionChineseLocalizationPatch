@@ -74,6 +74,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 _statFields[i] = AccessTools.Field(type, StatFieldNames[i]);
         }
 
+        /// <summary>各值文本的数值列位置缓存（控件名 → x 像素），取所见标签宽度的最大值以对齐。</summary>
+        private static readonly Dictionary<string, float> _valueColX = new Dictionary<string, float>();
+
         [HarmonyPostfix]
         private static void Postfix(object __instance)
         {
@@ -82,7 +85,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             try
             {
-                DisableWrap(__instance);
+                ProcessStats(__instance);
             }
             catch (System.Exception ex)
             {
@@ -90,20 +93,53 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             }
         }
 
-        /// <summary>六个参数值文本禁自动换行（行数恒定 = 参数块几何恒定的治本修复）。</summary>
-        private static void DisableWrap(object __instance)
+        /// <summary>
+        /// 六个参数值文本：① 禁自动换行（行数恒定 = 参数块几何恒定的治本修复）；
+        /// ② 在「标签：」后注入 TMP 富文本 &lt;pos=N&gt;，把数值推到固定列位 ——
+        /// 同一单元格跨武器数值对齐（表格效果），N 取该控件所见标签实测宽度的最大值，
+        /// 自适应字号。标签与数值的分隔由翻译文本中的冒号定位（中英文冒号均可）。
+        /// </summary>
+        private static void ProcessStats(object __instance)
         {
             if (_statFields == null)
                 return;
             foreach (FieldInfo f in _statFields)
             {
-                if (f?.GetValue(__instance) is TMP_Text tmp && tmp.enableWordWrapping)
+                if (!(f?.GetValue(__instance) is TMP_Text tmp))
+                    continue;
+
+                if (tmp.enableWordWrapping)
                 {
                     tmp.enableWordWrapping = false;
                     tmp.overflowMode = TextOverflowModes.Overflow;
                     Diagnostics.Log.Info("[信息卡] 禁换行: " + tmp.name);
                 }
+
+                string s = tmp.text;
+                if (string.IsNullOrEmpty(s) || s.Contains("<pos="))
+                    continue;
+
+                int idx = IndexOfColon(s);
+                if (idx < 0)
+                    continue; // 制导类型等纯值文本（无标签），整格就是数值
+
+                string label = s.Substring(0, idx + 1);
+                float labelWidth = tmp.GetPreferredValues(label).x + 6f;
+                _valueColX.TryGetValue(tmp.name, out float pos);
+                if (labelWidth > pos)
+                    pos = labelWidth;
+                _valueColX[tmp.name] = pos;
+
+                tmp.text = label + "<pos=" + Mathf.RoundToInt(pos) + ">" + s.Substring(idx + 1).TrimStart();
             }
+        }
+
+        private static int IndexOfColon(string s)
+        {
+            for (int i = 0; i < s.Length; i++)
+                if (s[i] == ':' || s[i] == '：')
+                    return i;
+            return -1;
         }
 
         internal static RectTransform ToRect(object value)
@@ -142,7 +178,23 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
     [HarmonyPatch]
     internal static class WeaponInfoCardStabilizer
     {
+        /// <summary>行内右侧单元格的列间距（px）：腾出空间防左右列文本粘连。</summary>
+        private const float ColumnGap = 70f;
+
+        private sealed class StatCell
+        {
+            public RectTransform Rt;
+            public Vector2 Orig;
+            public bool Shift;
+        }
+
+        private sealed class InstState
+        {
+            public readonly List<StatCell> Cells = new List<StatCell>();
+        }
+
         private static readonly HashSet<int> _pinnedInstances = new HashSet<int>();
+        private static readonly Dictionary<int, InstState> _instStates = new Dictionary<int, InstState>();
         private static int _degenerateFrames;
         private static int _screenW, _screenH;
 
@@ -226,10 +278,12 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 _pinnedInstances.Add(id);
                 if (_pinnedInstances.Count > 32)
                 {
-                    _pinnedInstances.Clear();
-                    _pinnedInstances.Add(id);
+                    _pinnedInstances.RemoveWhere(x => x != id);
+                    _instStates.Remove(id);
                 }
                 _degenerateFrames = 0;
+
+                ArrangeStatCells(id, instance);
 
                 Diagnostics.Log.Info(string.Format(
                     "[信息卡·钉死] 实例 {0}{1}: image {2:F0}x{3:F0}@({4:F0},{5:F0}) info @({6:F0},{7:F0}) desc {8:F0}x{9:F0}@({10:F0},{11:F0})",
@@ -256,6 +310,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 WeaponInfoCardPatches.DetachFromLayout(desc);
                 ApplyRect(desc, WeaponInfoCardPatches.Pins["description"], setHeight: false);
             }
+            if (_instStates.TryGetValue(id, out InstState st))
+                foreach (StatCell c in st.Cells)
+                    c.Rt.anchoredPosition = c.Orig + (c.Shift ? new Vector2(ColumnGap, 0f) : Vector2.zero);
 
             // —— 看门狗：激活却持续退化（图片/描述宽<1）→ 解除钉死重记 ——
             bool degenerate =
@@ -269,8 +326,55 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             }
         }
 
+        /// <summary>
+        /// 表格化排布：六个值文本按父行分组，行内按 x 排序，右侧单元格整体右移
+        /// <see cref="ColumnGap"/> 腾出列间距（配合 &lt;pos&gt; 数值列 = 表格效果）。
+        /// 原位按实例记录，回放/重置均可逆。
+        /// </summary>
+        private static void ArrangeStatCells(int id, object instance)
+        {
+            FieldInfo[] fields = WeaponInfoCardPatches._statFields;
+            if (fields == null)
+                return;
+
+            var byParent = new Dictionary<Transform, List<RectTransform>>();
+            foreach (FieldInfo f in fields)
+            {
+                if (!(f?.GetValue(instance) is TMP_Text tmp) || tmp.rectTransform == null || tmp.rectTransform.parent == null)
+                    continue;
+                Transform parent = tmp.rectTransform.parent;
+                if (!byParent.TryGetValue(parent, out List<RectTransform> list))
+                    byParent[parent] = list = new List<RectTransform>();
+                list.Add(tmp.rectTransform);
+            }
+
+            var state = new InstState();
+            foreach (KeyValuePair<Transform, List<RectTransform>> kv in byParent)
+            {
+                List<RectTransform> cells = kv.Value;
+                cells.Sort((a, b) => a.localPosition.x.CompareTo(b.localPosition.x));
+                for (int i = 0; i < cells.Count; i++)
+                {
+                    RectTransform rt = cells[i];
+                    bool shift = i > 0;
+                    state.Cells.Add(new StatCell { Rt = rt, Orig = rt.anchoredPosition, Shift = shift });
+                    if (shift)
+                        rt.anchoredPosition += new Vector2(ColumnGap, 0f);
+                }
+            }
+            _instStates[id] = state;
+            Diagnostics.Log.Info("[信息卡·表格] 值单元格 " + state.Cells.Count + " 个，行内右移 " + ColumnGap + "px");
+        }
+
         private static void ResetAll(object instance)
         {
+            int id = RuntimeHelpers.GetHashCode(instance);
+            if (_instStates.TryGetValue(id, out InstState st))
+            {
+                foreach (StatCell c in st.Cells)
+                    c.Rt.anchoredPosition = c.Orig; // 归还原位
+                _instStates.Remove(id);
+            }
             WeaponInfoCardPatches.Pins.Clear();
             _pinnedInstances.Clear();
             _degenerateFrames = 0;
