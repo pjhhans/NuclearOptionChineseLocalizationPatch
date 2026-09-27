@@ -218,40 +218,64 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 display[kv.Key] = d;
             }
 
-            // 第一遍：在显示文本上实测标签宽（定数值列位）与左格全文宽（定右列起点）
-            // 列位 = 列内最宽标签 + 内边距，全列共享 —— 对齐是表格的根本
-            // （v14 的有界间距让每格各排各的，用户实测否决：数值必须跨行对齐）。
-            float posLeft = 0f, posRight = 0f, colC = 0f;
-            foreach (KeyValuePair<TMP_Text, int> kv in cells)
+            // 表格几何<b>按实例冻结</b>（首个武器定版，之后不重算）：colC 计入数值宽，
+            // 数值随武器变化曾让右列起点每换一把武器抖一次（2026-09-27 用户实测）。
+            // 标签文本跨武器恒定（穿深:/RCS:/攻击距离:…），冻结不影响对齐。
+            float posLeft, posRight, colC;
+            if (TableGeom.TryGetValue(id, out float[] tgF))
             {
-                if (!display.TryGetValue(kv.Key, out string s))
-                    continue;
-                float fs = kv.Key.fontSize > 0f ? kv.Key.fontSize : 18f;
-                float pad = Mathf.Max(8f, fs * 0.5f); // 内边距收紧（缓解短标签行冒号后空白）
-                int idx = IndexOfColon(s);
-                if (idx < 0)
+                posLeft = tgF[0];
+                posRight = tgF[1];
+                colC = tgF[2];
+            }
+            else
+            {
+                posLeft = 0f;
+                posRight = 0f;
+                colC = 0f;
+                foreach (KeyValuePair<TMP_Text, int> kv in cells)
                 {
-                    // 无标签的纯值文本（如制导）：计入左格内容宽度（决定右列起点）
+                    if (!display.TryGetValue(kv.Key, out string s))
+                        continue;
+                    float fs = kv.Key.fontSize > 0f ? kv.Key.fontSize : 18f;
+                    float pad = Mathf.Max(8f, fs * 0.5f); // 内边距收紧（缓解短标签行冒号后空白）
+                    int idx = IndexOfColon(s);
+                    if (idx < 0)
+                    {
+                        // 无标签的纯值文本（如制导）：计入左格内容宽度（决定右列起点）
+                        if (kv.Value == 0)
+                            colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 8f);
+                        continue;
+                    }
+                    float labelW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs) + pad;
                     if (kv.Value == 0)
+                    {
+                        posLeft = Mathf.Max(posLeft, labelW);
                         colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 8f);
-                    continue;
+                    }
+                    else
+                    {
+                        posRight = Mathf.Max(posRight, labelW);
+                    }
                 }
-                float labelW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs) + pad;
-                if (kv.Value == 0)
-                {
-                    posLeft = Mathf.Max(posLeft, labelW);
-                    colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 8f);
-                }
-                else
-                {
-                    posRight = Mathf.Max(posRight, labelW);
-                }
+
+                posLeft = Mathf.Round(posLeft);
+                posRight = Mathf.Round(posRight);
+                colC = Mathf.Clamp(Mathf.Round(colC), 116f, 224f); // 参数区再收 1/5（2026-09-27 用户裁决）
             }
 
-            posLeft = Mathf.Round(posLeft);
-            posRight = Mathf.Round(posRight);
-            colC = Mathf.Clamp(Mathf.Round(colC), 116f, 224f); // 参数区再收 1/5（2026-09-27 用户裁决）
-            TableGeom[id] = new[] { posLeft, posRight, colC };
+            // 右格内容宽（含数值）<b>每次实测</b>：极端数值（如 15000000kg，本体疑似数据错误）
+            // 会插进描述 —— 超出基线时由 FitDescription 让位；正常数值与基线相近不触发
+            // 移动（防抖死区），参数区依旧固定。
+            float rightContent = 0f;
+            foreach (KeyValuePair<TMP_Text, int> kv in cells)
+            {
+                if (kv.Value != 1 || !display.TryGetValue(kv.Key, out string s))
+                    continue;
+                float fs = kv.Key.fontSize > 0f ? kv.Key.fontSize : 18f;
+                rightContent = Mathf.Max(rightContent, CellWidth(kv.Key, s, fs));
+            }
+            TableGeom[id] = new[] { posLeft, posRight, colC, rightContent };
 
             // 第二遍：把显示文本（含每列共享列位标签）写回 —— 已是中文，
             // 翻译管线对其恒等；下次 DisplayInfo 会被游戏重写为新原文，无残留。
@@ -329,10 +353,12 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             public readonly List<StatCell> Cells = new List<StatCell>();
             public float ParamShift; // 参数块整体平移量（世界 px，负=向左），供 FitDescription 修正
             public bool NoWeapon;    // 无武器模式：只钉描述（居中全宽）
+            public float FittedRightContent = -1f; // 上次描述让位所依据的右格内容宽（变更才重算）
         }
 
         private static readonly HashSet<int> _pinnedInstances = new HashSet<int>();
         private static readonly Dictionary<int, InstState> _instStates = new Dictionary<int, InstState>();
+        private static readonly HashSet<int> _widthDrift = new HashSet<int>(); // 宽度漂移告警（每实例一次）
         private static int _degenerateFrames;
         private static int _screenW, _screenH;
 
@@ -495,7 +521,23 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 ApplyRect(desc, WeaponInfoCardPatches.Pins["description"], setHeight: false);
             }
             if (_instStates.TryGetValue(id, out InstState st))
+            {
                 ApplyCellLayout(id, st);
+                // 右格内容宽变化（极端数值如 15000000kg）→ 描述让位重算；正常数值不动
+                if (desc != null
+                    && WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tgx)
+                    && tgx.Length > 3 && tgx[3] != st.FittedRightContent)
+                {
+                    st.FittedRightContent = tgx[3];
+                    FitDescription(id, desc);
+                }
+                // 宽度漂移巡检：钉值与实际矩形不一致 = 渲染期有其它机制在改宽度（留证）
+                if (desc != null && WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dpw)
+                    && Mathf.Abs(desc.rect.width - dpw[2]) > 2f && _widthDrift.Add(id))
+                    Diagnostics.Log.Info(string.Format(
+                        "[信息卡·表格] 描述宽度漂移：实际 {0:F0} ≠ 钉值 {1:F0}（渲染期被改写）",
+                        desc.rect.width, dpw[2]));
+            }
 
             // —— 看门狗：激活却持续退化（图片/描述宽<1）→ 解除钉死重记 ——
             bool degenerate =
@@ -635,7 +677,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 return rightWorld;
 
             Rect prW = WorldRect(pr);
-            rightWorld = Mathf.Min(rightWorld, prW.xMax - 10f * scale);
+            rightWorld = Mathf.Min(rightWorld, prW.xMax - 18f * scale);
 
             string bestName = null;
             float bestLeft = float.PositiveInfinity;
@@ -668,7 +710,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             }
             if (bestName != null)
             {
-                rightWorld = Mathf.Min(rightWorld, bestLeft - 14f * scale);
+                rightWorld = Mathf.Min(rightWorld, bestLeft - 26f * scale);
                 boundaryLog = string.Format("右侧面板 {0} 左缘 {1:F0}", bestName, bestLeft);
             }
             else
@@ -738,9 +780,11 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 Diagnostics.Log.Info("[信息卡·表格] 描述强制自动换行（修右缘溢出/裁字）");
             }
 
-            // 参数区右缘（世界）：格左缘最大值 + 参数块整体平移 + 内容预留
+            // 参数区右缘（世界）：格左缘最大值 + 参数块整体平移 + 内容预留。
+            // 基线 = tg[1]+40（固定，正常武器不抖动）；右格内容宽 tg[3] 超出基线时
+            // 让位（极端数值如 15000000kg），上限 320 防超长值吃满描述区。
             float allowance = WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tg)
-                ? tg[1] + 40f
+                ? Mathf.Max(tg[1] + 40f, Mathf.Min((tg.Length > 3 ? tg[3] : 0f) + 8f, 320f))
                 : ContentAllowance;
             float paramsRight = float.MinValue;
             foreach (StatCell c in st.Cells)
@@ -815,7 +859,8 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     c.Rt.anchoredPosition = c.Orig; // 归还原位
                 _instStates.Remove(id);
             }
-            WeaponInfoCardPatches.TableGeom.Remove(id);
+            // 表格几何保留（按实例冻结，跨 无武器↔有武器 模式抖动重钉不丢；实例销毁由
+            // 钉死路径的 stale 清理回收）—— 清掉会让右列起点随武器重算而抖动
             WeaponInfoCardPatches.Pins.Clear();
             _pinnedInstances.Clear();
             _degenerateFrames = 0;
