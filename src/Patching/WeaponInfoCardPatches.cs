@@ -75,12 +75,12 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         }
 
         /// <summary>
-        /// 数值列位置缓存 —— <b>按 TMP 实例</b>（ConditionalWeakTable，随卡片实例回收）。
-        /// 不同信息卡（基地菜单 / 挂架面板）字号与宽度不同，跨卡共享列位会把大卡的
-        /// 列位套到小卡上（v6 实测：小卡数值被推进描述区）。
+        /// 表格几何（<b>按实例</b>）：[0]=左格数值列位 posLeft，[1]=右格数值列位 posRight，
+        /// [2]=右格起点 colC（相对行左缘）。同一列的所有行共享同一列位 →
+        /// 数值跨行垂直对齐（表格效果）。不同信息卡（基地菜单 / 挂架面板）字号不同，
+        /// 各自实测，互不污染（v6 教训）。
         /// </summary>
-        private static readonly ConditionalWeakTable<TMP_Text, object> _valueColX =
-            new ConditionalWeakTable<TMP_Text, object>();
+        internal static readonly Dictionary<int, float[]> TableGeom = new Dictionary<int, float[]>();
 
         [HarmonyPostfix]
         private static void Postfix(object __instance)
@@ -99,47 +99,100 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         }
 
         /// <summary>
-        /// 六个参数值文本：① 禁自动换行（行数恒定 = 参数块几何恒定的治本修复）；
-        /// ② 在「标签：」后注入 TMP 富文本 &lt;pos=N&gt;，把数值推到固定列位 ——
-        /// 同一单元格跨武器数值对齐（表格效果），N 取该控件所见标签实测宽度的最大值，
-        /// 自适应字号。标签与数值的分隔由翻译文本中的冒号定位（中英文冒号均可）。
+        /// 表格化（两遍处理）：① 禁自动换行（行数恒定 = 几何恒定的治本修复）；
+        /// ② 第一遍实测各列标签/内容宽度，得出<b>每列共享</b>的列几何
+        /// （posLeft / posRight / colC），第二遍在「标签：」后注入 &lt;pos=N&gt;
+        /// 把数值推到固定列位 —— 同列跨行数值垂直对齐，即电子表格式四列布局：
+        /// A 参数 | B 数值 | C 参数 | D 数值。
         /// </summary>
         private static void ProcessStats(object __instance)
         {
             if (_statFields == null)
                 return;
+            int id = RuntimeHelpers.GetHashCode(__instance);
+
+            // 收集六个值文本：按父行分组、行内按 x 排序 → 0=左格（参数+数值），1=右格
+            var byParent = new Dictionary<Transform, List<TMP_Text>>();
             foreach (FieldInfo f in _statFields)
             {
-                if (!(f?.GetValue(__instance) is TMP_Text tmp))
+                if (!(f?.GetValue(__instance) is TMP_Text tmp) || tmp.rectTransform == null || tmp.rectTransform.parent == null)
                     continue;
-
                 if (tmp.enableWordWrapping)
                 {
                     tmp.enableWordWrapping = false;
                     tmp.overflowMode = TextOverflowModes.Overflow;
                     Diagnostics.Log.Info("[信息卡] 禁换行: " + tmp.name);
                 }
+                Transform parent = tmp.rectTransform.parent;
+                if (!byParent.TryGetValue(parent, out List<TMP_Text> list))
+                    byParent[parent] = list = new List<TMP_Text>();
+                list.Add(tmp);
+            }
 
-                string s = tmp.text;
-                if (string.IsNullOrEmpty(s) || s.Contains("<pos="))
+            var cells = new List<KeyValuePair<TMP_Text, int>>();
+            foreach (List<TMP_Text> row in byParent.Values)
+            {
+                row.Sort((a, b) => a.rectTransform.localPosition.x.CompareTo(b.rectTransform.localPosition.x));
+                for (int i = 0; i < row.Count; i++)
+                    cells.Add(new KeyValuePair<TMP_Text, int>(row[i], i > 0 ? 1 : 0));
+            }
+            if (cells.Count == 0)
+                return;
+
+            // 第一遍：实测标签宽（定数值列位）与左格全文宽（定右列起点）
+            float posLeft = 0f, posRight = 0f, colC = 0f;
+            var texts = new Dictionary<TMP_Text, string>();
+            foreach (KeyValuePair<TMP_Text, int> kv in cells)
+            {
+                string s = kv.Key.text;
+                if (string.IsNullOrEmpty(s))
                     continue;
+                if (s.Contains("<pos="))
+                {
+                    int p = s.IndexOf("<pos=");
+                    int q = s.IndexOf('>', p);
+                    if (q <= p)
+                        continue;
+                    s = s.Substring(0, p) + s.Substring(q + 1); // 剥旧列位标签，重测
+                }
+                texts[kv.Key] = s;
 
                 int idx = IndexOfColon(s);
                 if (idx < 0)
-                    continue; // 制导类型等纯值文本（无标签），整格就是数值
-
-                string label = s.Substring(0, idx + 1);
-                float labelWidth = tmp.GetPreferredValues(label).x + 6f;
-                float pos = 0f;
-                if (_valueColX.TryGetValue(tmp, out object boxed))
-                    pos = (float)boxed;
-                if (labelWidth > pos)
                 {
-                    _valueColX.Remove(tmp);
-                    _valueColX.Add(tmp, pos = labelWidth);
+                    // 无标签的纯值文本（如制导）：计入左格内容宽度（决定右列起点）
+                    if (kv.Value == 0)
+                        colC = Mathf.Max(colC, kv.Key.GetPreferredValues(s).x);
+                    continue;
                 }
+                float labelW = kv.Key.GetPreferredValues(s.Substring(0, idx + 1)).x;
+                if (kv.Value == 0)
+                {
+                    posLeft = Mathf.Max(posLeft, labelW);
+                    colC = Mathf.Max(colC, kv.Key.GetPreferredValues(s).x);
+                }
+                else
+                {
+                    posRight = Mathf.Max(posRight, labelW);
+                }
+            }
 
-                tmp.text = label + "<pos=" + Mathf.RoundToInt(pos) + ">" + s.Substring(idx + 1).TrimStart();
+            posLeft = Mathf.Round(posLeft + 8f);
+            posRight = Mathf.Round(posRight + 8f);
+            colC = Mathf.Clamp(Mathf.Round(colC + 26f), 170f, 300f);
+            TableGeom[id] = new[] { posLeft, posRight, colC };
+
+            // 第二遍：注入每列共享的列位标签
+            foreach (KeyValuePair<TMP_Text, int> kv in cells)
+            {
+                if (!texts.TryGetValue(kv.Key, out string s))
+                    continue;
+                int idx = IndexOfColon(s);
+                if (idx < 0)
+                    continue;
+                float pos = kv.Value == 0 ? posLeft : posRight;
+                kv.Key.text = s.Substring(0, idx + 1) + "<pos=" + Mathf.RoundToInt(pos) + ">"
+                    + s.Substring(idx + 1).TrimStart();
             }
         }
 
@@ -187,14 +240,16 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
     [HarmonyPatch]
     internal static class WeaponInfoCardStabilizer
     {
-        /// <summary>行内右侧单元格的列间距（px）：腾出空间防左右列文本粘连。</summary>
-        private const float ColumnGap = 70f;
+        /// <summary>无表格几何时的右列起点回落值（局部 px，相对行左缘）。</summary>
+        private const float FallbackColC = 180f;
 
         private sealed class StatCell
         {
             public RectTransform Rt;
-            public Vector2 Orig;
-            public bool Shift;
+            public Vector2 Orig;     // 原生 anchoredPosition
+            public int Col;          // 0=左格（参数+数值），1=右格
+            public float LeftEdge;   // 原生布局下矩形左缘的局部 x
+            public float RowLeft;    // 所在行左缘的局部 x
         }
 
         private sealed class InstState
@@ -289,6 +344,13 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 {
                     _pinnedInstances.RemoveWhere(x => x != id);
                     _instStates.Remove(id);
+                    // 清理已消亡实例的表格几何（菜单 Clone 销毁后键残留）
+                    var stale = new List<int>();
+                    foreach (int k in WeaponInfoCardPatches.TableGeom.Keys)
+                        if (k != id && !_pinnedInstances.Contains(k))
+                            stale.Add(k);
+                    foreach (int k in stale)
+                        WeaponInfoCardPatches.TableGeom.Remove(k);
                 }
                 _degenerateFrames = 0;
 
@@ -322,8 +384,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 ApplyRect(desc, WeaponInfoCardPatches.Pins["description"], setHeight: false);
             }
             if (_instStates.TryGetValue(id, out InstState st))
-                foreach (StatCell c in st.Cells)
-                    c.Rt.anchoredPosition = c.Orig + (c.Shift ? new Vector2(ColumnGap, 0f) : Vector2.zero);
+                ApplyCellLayout(id, st);
 
             // —— 看门狗：激活却持续退化（图片/描述宽<1）→ 解除钉死重记 ——
             bool degenerate =
@@ -338,8 +399,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         }
 
         /// <summary>
-        /// 表格化排布：六个值文本按父行分组，行内按 x 排序，右侧单元格整体右移
-        /// <see cref="ColumnGap"/> 腾出列间距（配合 &lt;pos&gt; 数值列 = 表格效果）。
+        /// 表格化排布：六个值文本按父行分组，行内按 x 排序；记录每格的原生位置、
+        /// 左缘与行左缘。右格实际位置由 <see cref="ApplyCellLayout"/> 按表格几何
+        /// （行左缘 + colC）回放，与 &lt;pos&gt; 列位共同构成四列表格。
         /// 原位按实例记录，回放/重置均可逆。
         /// </summary>
         private static void ArrangeStatCells(int id, object instance)
@@ -364,17 +426,45 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             {
                 List<RectTransform> cells = kv.Value;
                 cells.Sort((a, b) => a.localPosition.x.CompareTo(b.localPosition.x));
+                float rowLeft = float.MaxValue;
+                foreach (RectTransform rt in cells)
+                    rowLeft = Mathf.Min(rowLeft, rt.localPosition.x - rt.pivot.x * rt.rect.width);
                 for (int i = 0; i < cells.Count; i++)
                 {
                     RectTransform rt = cells[i];
-                    bool shift = i > 0;
-                    state.Cells.Add(new StatCell { Rt = rt, Orig = rt.anchoredPosition, Shift = shift });
-                    if (shift)
-                        rt.anchoredPosition += new Vector2(ColumnGap, 0f);
+                    state.Cells.Add(new StatCell
+                    {
+                        Rt = rt,
+                        Orig = rt.anchoredPosition,
+                        Col = i > 0 ? 1 : 0,
+                        LeftEdge = rt.localPosition.x - rt.pivot.x * rt.rect.width,
+                        RowLeft = rowLeft,
+                    });
                 }
             }
             _instStates[id] = state;
-            Diagnostics.Log.Info("[信息卡·表格] 值单元格 " + state.Cells.Count + " 个，行内右移 " + ColumnGap + "px");
+            ApplyCellLayout(id, state);
+
+            string geom = WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tg)
+                ? string.Format("posL={0:F0} posR={1:F0} colC={2:F0}", tg[0], tg[1], tg[2])
+                : "无表格几何（回落）";
+            Diagnostics.Log.Info("[信息卡·表格] 值单元格 " + state.Cells.Count + " 个，" + geom);
+        }
+
+        /// <summary>按表格几何回放单元格位置：右格左缘 = 行左缘 + colC，左格归原位。</summary>
+        private static void ApplyCellLayout(int id, InstState st)
+        {
+            float colC = WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tg)
+                ? tg[2]
+                : FallbackColC;
+            foreach (StatCell c in st.Cells)
+            {
+                Vector2 target = c.Col == 1
+                    ? c.Orig + new Vector2((c.RowLeft + colC) - c.LeftEdge, 0f)
+                    : c.Orig;
+                if (c.Rt.anchoredPosition != target)
+                    c.Rt.anchoredPosition = target;
+            }
         }
 
         /// <summary>参数表内容预留宽度（世界尺度，含最长参数串 + 余量）。</summary>
@@ -394,10 +484,14 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 return;
 
             float scale = desc.lossyScale.x;
+            // 右格此刻已被 ApplyCellLayout 移到 colC：预留 = 右格数值列位 + 数值宽余量
+            float allowance = WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tg)
+                ? tg[1] + 80f
+                : ContentAllowance;
             float paramsRight = float.MinValue;
             foreach (StatCell c in st.Cells)
                 paramsRight = Mathf.Max(paramsRight, LeftWorldX(c.Rt));
-            paramsRight += ContentAllowance * scale;
+            paramsRight += allowance * scale;
 
             float deltaWorld = paramsRight + 16f * scale - LeftWorldX(desc);
             if (deltaWorld <= 0f)
@@ -425,6 +519,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     c.Rt.anchoredPosition = c.Orig; // 归还原位
                 _instStates.Remove(id);
             }
+            WeaponInfoCardPatches.TableGeom.Remove(id);
             WeaponInfoCardPatches.Pins.Clear();
             _pinnedInstances.Clear();
             _degenerateFrames = 0;
