@@ -576,10 +576,10 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         private const float ContentAllowance = 160f;
 
         /// <summary>
-        /// 表格化后参数区变宽：若描述起点侵入参数区（窄卡，v6 实测挂架面板），
-        /// 右移描述并收窄宽度 —— <b>右缘保持不变</b>（多出的行数由描述区高度消化）。
-        /// 宽卡（基地菜单，描述本就在参数区右侧之外）不受影响。世界坐标比较，
-        /// 不依赖各控件锚点语义。
+        /// 描述区适配：① 强制自动换行（描述若 Overflow/禁换行，长行会在矩形右缘
+        /// 被裁字 —— 2026-09-27 实测「不规则」被裁掉「则」）；② 左缘让位参数区
+        /// （max(原生左缘, 参数右缘+间距)）；③ 右缘钳到 min(原生右缘,
+        /// 父容器右缘 − 边距)。世界坐标运算，不依赖锚点语义。
         /// </summary>
         private static void FitDescription(int id, RectTransform desc)
         {
@@ -589,27 +589,46 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 return;
 
             float scale = desc.lossyScale.x;
-            // 右格此刻已被 ApplyCellLayout 移到 colC：预留 = 右格数值列位 + 数值宽余量
+
+            TMP_Text dtmp = desc.GetComponent<TMP_Text>();
+            if (dtmp != null && !dtmp.enableWordWrapping)
+            {
+                dtmp.enableWordWrapping = true;
+                Diagnostics.Log.Info("[信息卡·表格] 描述原本禁换行，已强制开启（修右缘裁字）");
+            }
+
+            // 参数区右缘（世界）：格左缘最大值 + 参数块整体平移 + 内容预留
             float allowance = WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tg)
                 ? tg[1] + 50f
                 : ContentAllowance;
             float paramsRight = float.MinValue;
             foreach (StatCell c in st.Cells)
                 paramsRight = Mathf.Max(paramsRight, LeftWorldX(c.Rt));
-            paramsRight += st.ParamShift; // 参数块整体平移后，右缘同步移动
+            paramsRight += st.ParamShift;
             paramsRight += allowance * scale;
 
-            float deltaWorld = paramsRight + 10f * scale - LeftWorldX(desc);
-            if (deltaWorld <= 0f)
-                return; // 宽卡：无需让位
+            // 左缘 = max(原生, 参数右缘 + 间距)
+            float nativeLeftWorld = LeftWorldX(desc);
+            float leftWorld = Mathf.Max(nativeLeftWorld, paramsRight + 10f * scale);
+            float deltaLocal = (leftWorld - nativeLeftWorld) / scale;
 
-            float deltaLocal = deltaWorld / scale;
-            float newWidth = dpin[2] - deltaLocal;
-            if (newWidth < 160f)
-                newWidth = 160f;
+            // 右缘 = min(原生右缘, 父容器（武器卡段）右缘 - 边距)
+            float nativeRightWorld = nativeLeftWorld + dpin[2] * scale;
+            float rightWorld = nativeRightWorld;
+            if (desc.parent is RectTransform pr)
+            {
+                float parentRight = pr.position.x
+                    + (1f - pr.pivot.x) * pr.rect.width * pr.lossyScale.x;
+                rightWorld = Mathf.Min(rightWorld, parentRight - 10f * scale);
+                Diagnostics.Log.Info(string.Format(
+                    "[信息卡·表格] 描述适配：父 {0} 宽 {1:F0} 右缘 {2:F0}；参数右缘 {3:F0}，描述左缘 {4:F0}→{5:F0}，右缘 {6:F0}→{7:F0}，宽 {8:F0}→{9:F0}",
+                    pr.name, pr.rect.width, parentRight, paramsRight,
+                    nativeLeftWorld, leftWorld, nativeRightWorld, rightWorld, dpin[2],
+                    Mathf.Max(160f, (rightWorld - leftWorld) / scale)));
+            }
+
+            float newWidth = Mathf.Max(160f, (rightWorld - leftWorld) / scale);
             WeaponInfoCardPatches.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
-            Diagnostics.Log.Info(string.Format("[信息卡·表格] 描述右移 {0:F0}、宽 {1:F0}→{2:F0} 适配参数表",
-                deltaLocal, dpin[2], newWidth));
         }
 
         /// <summary>矩形左缘的世界 x（position 是 pivot 世界坐标，需回退 pivot 占比）。</summary>
