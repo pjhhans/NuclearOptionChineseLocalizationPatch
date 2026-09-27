@@ -213,58 +213,60 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 }
                 Diagnostics.Log.Info(sb.ToString());
 
-                // ---- 加宽（v6：强制设定绝对宽度，SetSizeWithCurrentAnchors 对
-                //      拉伸锚也生效；v5 的 sizeDelta += 会被全拉伸锚链整链跳过） ----
+                // ---- 加宽（v8）----
                 float required = PylonDropdownPatches.MeasureMaxOptionWidth(__instance)
                     + PylonDropdownPatches.ExtraPadding;
                 float labelW = firstLabel.rectTransform.rect.width;
                 float delta = required - labelW;
                 if (delta >= PylonDropdownPatches.MinDelta)
                 {
-                    // 顶层 = 从标签向上，父为 dropdown 自身 / 挂 Canvas / 无父 为止
-                    Transform top = firstLabel.rectTransform;
-                    while (top.parent != null
-                           && top.parent != __instance.transform
-                           && !HasCanvasComponent(top.parent))
-                    {
-                        top = top.parent;
-                    }
-
-                    // 祖先链：标签 → 顶层（含）；顺带把 Item Background 兄弟纳入
+                    if (popupRt.rect.width + delta > PylonDropdownPatches.MaxTemplateWidth)
+                        delta = PylonDropdownPatches.MaxTemplateWidth - popupRt.rect.width;
+                }
+                if (delta >= PylonDropdownPatches.MinDelta)
+                {
+                    // 链：标签 → … → popup 根（m_Dropdown），含两端。
+                    // v7 转储发现 popup 根挂着 Canvas 组件导致向上走提前停、根没加宽
+                    // 而子节点爆宽 —— 这里直接以 popupRt 为终点。
                     var chain = new List<RectTransform>();
                     for (Transform n = firstLabel.rectTransform; n != null; n = n.parent)
                     {
                         chain.Add(n as RectTransform);
-                        if (n == top) break;
+                        if (n == popupRt) break;
                     }
+                    if (chain[chain.Count - 1] != popupRt) chain.Add(popupRt); // 兜底
+
                     RectTransform item = firstLabel.rectTransform.parent as RectTransform;
                     RectTransform bg = item != null
                         ? item.Find("Item Background") as RectTransform : null;
 
-                    // 自顶向下应用，目标宽统一 = 修改前 rect.width + delta：
-                    // 拉伸锚节点在父加宽后 rect 已自然 +delta，再强制到同一目标 = 幂等；
-                    // 固定宽节点则被直接撑到目标。
+                    // ① 目标宽全部按【修改前】rect.width 预计算，② 再自顶向下应用。
+                    // v7 教训：应用时现读现算，拉伸锚节点被「父加宽 + 自身强制」
+                    // 双重叠加（标签一路滚到 658px，把列表顶出屏幕左缘）。
+                    var targets = new float[chain.Count];
+                    for (int i = 0; i < chain.Count; i++)
+                        targets[i] = (chain[i] != null ? chain[i].rect.width : 0f) + delta;
+                    float bgTarget = (bg != null ? bg.rect.width : 0f) + delta;
+
                     for (int i = chain.Count - 1; i >= 0; i--)
                     {
                         RectTransform rt = chain[i];
                         if (rt == null) continue;
                         DisableWidthControl(rt);
-                        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal,
-                            rt.rect.width + delta);
+                        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, targets[i]);
                     }
                     if (bg != null)
                     {
                         DisableWidthControl(bg);
-                        bg.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal,
-                            bg.rect.width + delta);
+                        bg.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, bgTarget);
                     }
 
-                    ClampIntoCanvas(top as RectTransform);
+                    ClampIntoCanvas(popupRt);
 
                     // 读回验证：若仍等于旧值，说明宽度另有来源，转储整条链定位
                     Diagnostics.Log.Info(string.Format(
-                        "[挂架下拉] 已加宽 +{0:F0}px，读回：顶层 {1:F0}px / 列表 {2:F0}px / 标签 {3:F0}px（目标 {4:F0}px）",
-                        delta, ((RectTransform)top).rect.width, popupRt.rect.width,
+                        "[挂架下拉] 已加宽 +{0:F0}px，读回：根 {1:F0}px / 标签 {2:F0}px（目标 {3:F0}px）",
+                        delta, popupRt.rect.width,
                         firstLabel.rectTransform.rect.width, required));
                     Diagnostics.Log.Info("[挂架下拉·链] " + DumpChain(chain));
                 }
