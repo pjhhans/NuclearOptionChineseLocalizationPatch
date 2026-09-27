@@ -612,19 +612,46 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             float leftWorld = Mathf.Max(nativeLeftWorld, paramsRight + 10f * scale);
             float deltaLocal = (leftWorld - nativeLeftWorld) / scale;
 
-            // 右缘 = min(原生右缘, 父容器（武器卡段）右缘 - 边距)
+            // 右缘 = min(原生右缘, 父容器右缘 - 边距, 右侧相邻面板左缘 - 边距)
+            // （v12 实测：Darkener 宽 1170 比描述矩形还宽——武器卡背景横跨到
+            // 飞机统计面板底下，父容器钳制无效；真正的边界是右侧面板的左缘。）
             float nativeRightWorld = nativeLeftWorld + dpin[2] * scale;
             float rightWorld = nativeRightWorld;
             if (desc.parent is RectTransform pr)
             {
-                float parentRight = pr.position.x
-                    + (1f - pr.pivot.x) * pr.rect.width * pr.lossyScale.x;
+                Rect prW = WorldRect(pr);
+                float parentRight = prW.xMax;
                 rightWorld = Mathf.Min(rightWorld, parentRight - 10f * scale);
+
+                string bestName = null;
+                float bestLeft = float.PositiveInfinity;
+                Transform gp = pr.parent;
+                if (gp != null)
+                {
+                    foreach (Transform sib in gp)
+                    {
+                        if (sib == pr || !(sib is RectTransform sr) || !sr.gameObject.activeInHierarchy)
+                            continue;
+                        Rect sw = WorldRect(sr);
+                        // 须在本段右半之外、且与本段垂直重叠，才算「右侧相邻面板」
+                        bool rightOf = sw.xMin > prW.xMin + prW.width * 0.5f;
+                        bool vOverlap = sw.yMin < prW.yMax - 1f && sw.yMax > prW.yMin + 1f;
+                        if (rightOf && vOverlap && sw.xMin < bestLeft)
+                        {
+                            bestLeft = sw.xMin;
+                            bestName = sr.name;
+                        }
+                    }
+                }
+                if (bestName != null)
+                    rightWorld = Mathf.Min(rightWorld, bestLeft - 14f * scale);
+
+                float finalWidth = Mathf.Max(160f, (rightWorld - leftWorld) / scale);
                 Diagnostics.Log.Info(string.Format(
-                    "[信息卡·表格] 描述适配：父 {0} 宽 {1:F0} 右缘 {2:F0}；参数右缘 {3:F0}，描述左缘 {4:F0}→{5:F0}，右缘 {6:F0}→{7:F0}，宽 {8:F0}→{9:F0}",
-                    pr.name, pr.rect.width, parentRight, paramsRight,
-                    nativeLeftWorld, leftWorld, nativeRightWorld, rightWorld, dpin[2],
-                    Mathf.Max(160f, (rightWorld - leftWorld) / scale)));
+                    "[信息卡·表格] 描述适配：父 {0} 右缘 {1:F0}；右侧面板 {2} 左缘 {3:F0}；描述左缘 {4:F0}→{5:F0}，右缘 {6:F0}→{7:F0}，宽 {8:F0}→{9:F0}",
+                    pr.name, parentRight,
+                    bestName ?? "（无）", bestName != null ? bestLeft : -1f,
+                    nativeLeftWorld, leftWorld, nativeRightWorld, rightWorld, dpin[2], finalWidth));
             }
 
             float newWidth = Mathf.Max(160f, (rightWorld - leftWorld) / scale);
@@ -634,6 +661,13 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// <summary>矩形左缘的世界 x（position 是 pivot 世界坐标，需回退 pivot 占比）。</summary>
         private static float LeftWorldX(RectTransform rt)
             => rt.position.x - rt.pivot.x * rt.rect.width * rt.lossyScale.x;
+
+        /// <summary>矩形的世界空间包围盒（轴对齐，含缩放）。</summary>
+        private static Rect WorldRect(RectTransform rt)
+        {
+            Vector2 size = new Vector2(rt.rect.width * rt.lossyScale.x, rt.rect.height * rt.lossyScale.y);
+            return new Rect((Vector2)rt.position - rt.pivot * size, size);
+        }
 
         private static void ResetAll(object instance)
         {
