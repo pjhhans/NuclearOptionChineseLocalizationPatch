@@ -214,6 +214,8 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             // 第一遍：在显示文本上实测标签宽（定数值列位）与左格全文宽（定右列起点）
             float posLeft = 0f, posRight = 0f, colC = 0f;
+            var ownLabel = new Dictionary<TMP_Text, float>(); // 各格自身标签宽（有界间距用）
+            var ownFs = new Dictionary<TMP_Text, float>();
             foreach (KeyValuePair<TMP_Text, int> kv in cells)
             {
                 if (!display.TryGetValue(kv.Key, out string s))
@@ -228,7 +230,10 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                         colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 10f);
                     continue;
                 }
-                float labelW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs) + pad;
+                float ownW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs);
+                ownLabel[kv.Key] = ownW;
+                ownFs[kv.Key] = fs;
+                float labelW = ownW + pad;
                 if (kv.Value == 0)
                 {
                     posLeft = Mathf.Max(posLeft, labelW);
@@ -245,8 +250,10 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             colC = Mathf.Clamp(Mathf.Round(colC), 145f, 280f);
             TableGeom[id] = new[] { posLeft, posRight, colC };
 
-            // 第二遍：把显示文本（含每列共享列位标签）写回 —— 已是中文，
+            // 第二遍：把显示文本（含列位标签）写回 —— 已是中文，
             // 翻译管线对其恒等；下次 DisplayInfo 会被游戏重写为新原文，无残留。
+            // 列位取「列共享位」与「自身标签宽 + 间距上限」的较小者：短标签行
+            // （装药:/花费:）不再被最宽标签（攻击距离:）拉出大段空白（2026-09-27 用户裁决）。
             foreach (KeyValuePair<TMP_Text, int> kv in cells)
             {
                 if (!display.TryGetValue(kv.Key, out string s))
@@ -254,7 +261,11 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 int idx = IndexOfColon(s);
                 if (idx < 0)
                     continue;
-                float pos = kv.Value == 0 ? posLeft : posRight;
+                float colPos = kv.Value == 0 ? posLeft : posRight;
+                float fs = ownFs.TryGetValue(kv.Key, out float f) ? f : 18f;
+                float own = ownLabel.TryGetValue(kv.Key, out float w) ? w : 0f;
+                float gapMax = Mathf.Max(18f, fs * 1.2f);
+                float pos = Mathf.Min(colPos, own + gapMax);
                 kv.Key.text = s.Substring(0, idx + 1) + "<pos=" + Mathf.RoundToInt(pos) + ">"
                     + s.Substring(idx + 1).TrimStart();
             }
@@ -320,6 +331,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         {
             public readonly List<StatCell> Cells = new List<StatCell>();
             public float ParamShift; // 参数块整体平移量（世界 px，负=向左），供 FitDescription 修正
+            public bool NoWeapon;    // 无武器模式：只钉描述（居中全宽）
         }
 
         private static readonly HashSet<int> _pinnedInstances = new HashSet<int>();
@@ -383,12 +395,29 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             float[] des = Snapshot(desc);
             bool imgValid = img != null && img[2] >= 1f;
             bool infValid = inf != null && imgValid && inf[0] >= img[0] + img[2] - 5f; // 参数须在图片右侧
-            bool desValid = des != null && des[2] >= 1f && imgValid && des[0] >= img[0] + img[2] - 5f;
+            bool desBase = des != null && des[2] >= 1f;
+            bool desValid = desBase && imgValid && des[0] >= img[0] + img[2] - 5f;
 
             if (!_pinnedInstances.Contains(id))
             {
+                // —— 无武器分支（本体 SetActive(false) 掉图片/参数区）：
+                //     描述独占卡片全宽并居中，右缘仍钳到右侧面板（长描述不再越界）——
+                if (!(imgValid && infValid))
+                {
+                    if (!desBase)
+                        return;
+                    WeaponInfoCardPatches.Pins["description"] = des;
+                    WeaponInfoCardPatches.DetachFromLayout(desc);
+                    _pinnedInstances.Add(id);
+                    _instStates[id] = new InstState { NoWeapon = true };
+                    _degenerateFrames = 0;
+                    PinDescriptionCentered(desc);
+                    Diagnostics.Log.Info("[信息卡·钉死] 实例 " + id + "（无武器，描述居中全宽）");
+                    return;
+                }
+
                 // 新实例：布局稳定前完全不碰几何（原生布局，绝不产生「钉错」）
-                if (!(imgValid && infValid && desValid))
+                if (!desValid)
                     return;
 
                 bool adapted = WeaponInfoCardPatches.Pins.Count == 3 && (
@@ -432,7 +461,23 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 return;
             }
 
-            // —— 已钉实例：确保脱离 + 每帧回放 ——
+            // —— 已钉实例：模式切换检测 + 每帧回放 ——
+            bool nowNoWeapon = !imgValid || !infValid;
+            _instStates.TryGetValue(id, out InstState cur);
+            if (cur != null && cur.NoWeapon != nowNoWeapon)
+            {
+                ResetAll(instance); // 无武器↔有武器切换：归还布局，按新模式重新钉死
+                return;
+            }
+            if (cur != null && cur.NoWeapon)
+            {
+                if (desc != null)
+                {
+                    WeaponInfoCardPatches.DetachFromLayout(desc);
+                    ApplyRect(desc, WeaponInfoCardPatches.Pins["description"], setHeight: false);
+                }
+                return;
+            }
             if (imageArea != null)
             {
                 if (WeaponInfoCardPatches._weaponImageField?.GetValue(instance) is Image wimg && !wimg.preserveAspect)
@@ -576,10 +621,53 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         private const float ContentAllowance = 160f;
 
         /// <summary>
+        /// 描述右缘世界上限 = min(原生右缘, 父容器右缘 − 边距, 右侧相邻面板左缘 − 边距)。
+        /// （v12 实测：Darkener 宽 1170 比描述矩形还宽——武器卡背景横跨到
+        /// 飞机统计面板底下，父容器钳制无效；真正的边界是右侧面板的左缘。）
+        /// </summary>
+        private static float DescriptionRightLimitWorld(
+            RectTransform desc, float nativeRightWorld, float scale, out string boundaryLog)
+        {
+            float rightWorld = nativeRightWorld;
+            boundaryLog = null;
+            if (!(desc.parent is RectTransform pr))
+                return rightWorld;
+
+            Rect prW = WorldRect(pr);
+            rightWorld = Mathf.Min(rightWorld, prW.xMax - 10f * scale);
+
+            string bestName = null;
+            float bestLeft = float.PositiveInfinity;
+            Transform gp = pr.parent;
+            if (gp != null)
+            {
+                foreach (Transform sib in gp)
+                {
+                    if (sib == pr || !(sib is RectTransform sr) || !sr.gameObject.activeInHierarchy)
+                        continue;
+                    Rect sw = WorldRect(sr);
+                    // 须在本段右半之外、且与本段垂直重叠，才算「右侧相邻面板」
+                    bool rightOf = sw.xMin > prW.xMin + prW.width * 0.5f;
+                    bool vOverlap = sw.yMin < prW.yMax - 1f && sw.yMax > prW.yMin + 1f;
+                    if (rightOf && vOverlap && sw.xMin < bestLeft)
+                    {
+                        bestLeft = sw.xMin;
+                        bestName = sr.name;
+                    }
+                }
+            }
+            if (bestName != null)
+            {
+                rightWorld = Mathf.Min(rightWorld, bestLeft - 14f * scale);
+                boundaryLog = string.Format("右侧面板 {0} 左缘 {1:F0}", bestName, bestLeft);
+            }
+            return rightWorld;
+        }
+
+        /// <summary>
         /// 描述区适配：① 强制自动换行（描述若 Overflow/禁换行，长行会在矩形右缘
-        /// 被裁字 —— 2026-09-27 实测「不规则」被裁掉「则」）；② 左缘让位参数区
-        /// （max(原生左缘, 参数右缘+间距)）；③ 右缘钳到 min(原生右缘,
-        /// 父容器右缘 − 边距)。世界坐标运算，不依赖锚点语义。
+        /// 被裁字）；② 左缘让位参数区（max(原生左缘, 参数右缘+间距)）；
+        /// ③ 右缘钳到 <see cref="DescriptionRightLimitWorld"/>。世界坐标运算。
         /// </summary>
         private static void FitDescription(int id, RectTransform desc)
         {
@@ -612,50 +700,40 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             float leftWorld = Mathf.Max(nativeLeftWorld, paramsRight + 10f * scale);
             float deltaLocal = (leftWorld - nativeLeftWorld) / scale;
 
-            // 右缘 = min(原生右缘, 父容器右缘 - 边距, 右侧相邻面板左缘 - 边距)
-            // （v12 实测：Darkener 宽 1170 比描述矩形还宽——武器卡背景横跨到
-            // 飞机统计面板底下，父容器钳制无效；真正的边界是右侧面板的左缘。）
             float nativeRightWorld = nativeLeftWorld + dpin[2] * scale;
-            float rightWorld = nativeRightWorld;
-            if (desc.parent is RectTransform pr)
-            {
-                Rect prW = WorldRect(pr);
-                float parentRight = prW.xMax;
-                rightWorld = Mathf.Min(rightWorld, parentRight - 10f * scale);
-
-                string bestName = null;
-                float bestLeft = float.PositiveInfinity;
-                Transform gp = pr.parent;
-                if (gp != null)
-                {
-                    foreach (Transform sib in gp)
-                    {
-                        if (sib == pr || !(sib is RectTransform sr) || !sr.gameObject.activeInHierarchy)
-                            continue;
-                        Rect sw = WorldRect(sr);
-                        // 须在本段右半之外、且与本段垂直重叠，才算「右侧相邻面板」
-                        bool rightOf = sw.xMin > prW.xMin + prW.width * 0.5f;
-                        bool vOverlap = sw.yMin < prW.yMax - 1f && sw.yMax > prW.yMin + 1f;
-                        if (rightOf && vOverlap && sw.xMin < bestLeft)
-                        {
-                            bestLeft = sw.xMin;
-                            bestName = sr.name;
-                        }
-                    }
-                }
-                if (bestName != null)
-                    rightWorld = Mathf.Min(rightWorld, bestLeft - 14f * scale);
-
-                float finalWidth = Mathf.Max(160f, (rightWorld - leftWorld) / scale);
-                Diagnostics.Log.Info(string.Format(
-                    "[信息卡·表格] 描述适配：父 {0} 右缘 {1:F0}；右侧面板 {2} 左缘 {3:F0}；描述左缘 {4:F0}→{5:F0}，右缘 {6:F0}→{7:F0}，宽 {8:F0}→{9:F0}",
-                    pr.name, parentRight,
-                    bestName ?? "（无）", bestName != null ? bestLeft : -1f,
-                    nativeLeftWorld, leftWorld, nativeRightWorld, rightWorld, dpin[2], finalWidth));
-            }
-
+            float rightWorld = DescriptionRightLimitWorld(desc, nativeRightWorld, scale, out string boundaryLog);
             float newWidth = Mathf.Max(160f, (rightWorld - leftWorld) / scale);
             WeaponInfoCardPatches.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
+
+            Diagnostics.Log.Info(string.Format(
+                "[信息卡·表格] 描述适配：{0}；参数右缘 {1:F0}，左缘 {2:F0}→{3:F0}，宽 {4:F0}→{5:F0}",
+                boundaryLog ?? "无右侧面板", paramsRight, nativeLeftWorld, leftWorld, dpin[2], newWidth));
+        }
+
+        /// <summary>
+        /// 无武器分支：描述独占卡片全宽（左缘 = 卡片左缘 + 边距），右缘仍钳到
+        /// 右侧相邻面板；描述文本本身居中对齐 ⇒ 视觉居中，长描述有最大宽度可用。
+        /// </summary>
+        private static void PinDescriptionCentered(RectTransform desc)
+        {
+            if (desc == null
+                || !WeaponInfoCardPatches.Pins.TryGetValue("description", out float[] dpin))
+                return;
+
+            float scale = desc.lossyScale.x;
+            float nativeLeftWorld = LeftWorldX(desc);
+            float nativeRightWorld = nativeLeftWorld + dpin[2] * scale;
+            float rightWorld = DescriptionRightLimitWorld(desc, nativeRightWorld, scale, out string boundaryLog);
+            float leftWorld = desc.parent is RectTransform pr
+                ? WorldRect(pr).xMin + 12f * scale
+                : nativeLeftWorld;
+            float newWidth = Mathf.Max(160f, (rightWorld - leftWorld) / scale);
+            float deltaLocal = (leftWorld - nativeLeftWorld) / scale;
+            WeaponInfoCardPatches.Pins["description"] = new[] { dpin[0] + deltaLocal, dpin[1], newWidth, dpin[3] };
+
+            Diagnostics.Log.Info(string.Format(
+                "[信息卡·表格] 无武器：描述居中全宽，左缘 {0:F0}→{1:F0}，宽 {2:F0}→{3:F0} {4}",
+                nativeLeftWorld, leftWorld, dpin[2], newWidth, boundaryLog ?? ""));
         }
 
         /// <summary>矩形左缘的世界 x（position 是 pivot 世界坐标，需回退 pivot 占比）。</summary>
