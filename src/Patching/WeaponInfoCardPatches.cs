@@ -82,6 +82,25 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// </summary>
         internal static readonly Dictionary<int, float[]> TableGeom = new Dictionary<int, float[]>();
 
+        /// <summary>已做过原文转储的实例（诊断，防刷屏）。</summary>
+        private static readonly HashSet<int> _dumped = new HashSet<int>();
+
+        /// <summary>
+        /// 单元格文本宽下界：GetPreferredValues 实测与逐字符估计取较大者。
+        /// 实测依赖当前字体度量 —— 新克隆菜单首刷时 CJK 可能仍走回退字体
+        /// （每字 ≈0.5em），估出的列位会把中文标签压住（v8 实测「穿深:0」粘连）。
+        /// 汉字/全角字符在真实字体里恰为 1em，以 fontSize 逐字符估计兜底。
+        /// </summary>
+        private static float CellWidth(TMP_Text tmp, string s, float fontSize)
+        {
+            float est = 0f;
+            for (int i = 0; i < s.Length; i++)
+                est += s[i] >= 0x2E80 ? fontSize : fontSize * 0.62f;
+            float measured = 0f;
+            try { measured = tmp.GetPreferredValues(s).x; } catch { /* 字体未就绪时用估计值 */ }
+            return Mathf.Max(measured, est);
+        }
+
         [HarmonyPostfix]
         private static void Postfix(object __instance)
         {
@@ -139,6 +158,28 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             if (cells.Count == 0)
                 return;
 
+            // —— 诊断（每实例一次）：转储六格进入本方法时的真实文本；
+            //     对仍无中文的格子用同 scope 探针重查词表 —— 若探针翻得出而实机没翻，
+            //     说明文本写入路径没进管线（R/C 未翻问题 2026-09-27 待定论）。
+            if (_dumped.Count > 64) _dumped.Clear();
+            if (_dumped.Add(id))
+            {
+                var localizer = LocalizationPlugin.Localizer;
+                var sb = new System.Text.StringBuilder(192);
+                foreach (KeyValuePair<TMP_Text, int> kv in cells)
+                {
+                    string cur = kv.Key.text ?? string.Empty;
+                    sb.Append(kv.Key.name).Append("=\"").Append(cur.Replace("\n", "\\n")).Append("\"");
+                    if (localizer != null && cur.Length > 0 && !Core.TextLocalizer.HasChinese(cur))
+                    {
+                        string re = localizer.Localize(cur, PatchHelpers.ScopeOf(kv.Key));
+                        sb.Append("→探针\"").Append(re.Replace("\n", "\\n")).Append("\"");
+                    }
+                    sb.Append(' ');
+                }
+                Diagnostics.Log.Info("[信息卡·原文] " + sb.ToString());
+            }
+
             // 第一遍：实测标签宽（定数值列位）与左格全文宽（定右列起点）
             float posLeft = 0f, posRight = 0f, colC = 0f;
             var texts = new Dictionary<TMP_Text, string>();
@@ -157,19 +198,21 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 }
                 texts[kv.Key] = s;
 
+                float fs = kv.Key.fontSize > 0f ? kv.Key.fontSize : 18f;
+                float pad = Mathf.Max(8f, fs * 0.6f);
                 int idx = IndexOfColon(s);
                 if (idx < 0)
                 {
                     // 无标签的纯值文本（如制导）：计入左格内容宽度（决定右列起点）
                     if (kv.Value == 0)
-                        colC = Mathf.Max(colC, kv.Key.GetPreferredValues(s).x);
+                        colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 26f);
                     continue;
                 }
-                float labelW = kv.Key.GetPreferredValues(s.Substring(0, idx + 1)).x;
+                float labelW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs) + pad;
                 if (kv.Value == 0)
                 {
                     posLeft = Mathf.Max(posLeft, labelW);
-                    colC = Mathf.Max(colC, kv.Key.GetPreferredValues(s).x);
+                    colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 26f);
                 }
                 else
                 {
@@ -177,9 +220,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 }
             }
 
-            posLeft = Mathf.Round(posLeft + 8f);
-            posRight = Mathf.Round(posRight + 8f);
-            colC = Mathf.Clamp(Mathf.Round(colC + 26f), 170f, 300f);
+            posLeft = Mathf.Round(posLeft);
+            posRight = Mathf.Round(posRight);
+            colC = Mathf.Clamp(Mathf.Round(colC), 170f, 300f);
             TableGeom[id] = new[] { posLeft, posRight, colC };
 
             // 第二遍：注入每列共享的列位标签
