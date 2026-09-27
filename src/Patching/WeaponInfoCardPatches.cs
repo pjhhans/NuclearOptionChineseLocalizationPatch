@@ -95,7 +95,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         {
             float est = 0f;
             for (int i = 0; i < s.Length; i++)
-                est += s[i] >= 0x2E80 ? fontSize : fontSize * 0.62f;
+                est += s[i] >= 0x2E80 ? fontSize * 1.1f : fontSize * 0.62f; // CJK 按 1.1em 估（部分字体 advance > 1em）
             float measured = 0f;
             try { measured = tmp.GetPreferredValues(s).x; } catch { /* 字体未就绪时用估计值 */ }
             return Mathf.Max(measured, est);
@@ -142,6 +142,10 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     tmp.overflowMode = TextOverflowModes.Overflow;
                     Diagnostics.Log.Info("[信息卡] 禁换行: " + tmp.name);
                 }
+                // 左对齐：单元格矩形只有 ~100px 而内容更宽，右/居中对齐会把文本
+                // 原点向左挤出矩形，<pos> 列位的参照系随之漂移；左对齐保证
+                // 文本原点 = 矩形左缘，与 <pos>（自原点起算）一致。
+                tmp.alignment = TextAlignmentOptions.Left;
                 Transform parent = tmp.rectTransform.parent;
                 if (!byParent.TryGetValue(parent, out List<TMP_Text> list))
                     byParent[parent] = list = new List<TMP_Text>();
@@ -162,9 +166,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             //     对仍无中文的格子用同 scope 探针重查词表 —— 若探针翻得出而实机没翻，
             //     说明文本写入路径没进管线（R/C 未翻问题 2026-09-27 待定论）。
             if (_dumped.Count > 64) _dumped.Clear();
+            var localizer = LocalizationPlugin.Localizer;
             if (_dumped.Add(id))
             {
-                var localizer = LocalizationPlugin.Localizer;
                 var sb = new System.Text.StringBuilder(192);
                 foreach (KeyValuePair<TMP_Text, int> kv in cells)
                 {
@@ -180,39 +184,55 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 Diagnostics.Log.Info("[信息卡·原文] " + sb.ToString());
             }
 
-            // 第一遍：实测标签宽（定数值列位）与左格全文宽（定右列起点）
-            float posLeft = 0f, posRight = 0f, colC = 0f;
-            var texts = new Dictionary<TMP_Text, string>();
+            // —— 第零遍：求每格的「显示文本」 ——
+            // 关键事实（v9 日志实证）：这六格的翻译发生在 TMP 渲染管线内，
+            // tmp.text 里存的始终是英文原文；v9 用英文标签量列位（posR=44 量的是
+            // "HE:"），实际渲染的「装药:」更宽 → <pos> 落进中文标签内部、
+            // 数值压住标签（用户实测「攻击距离不能正常显示」）。
+            // 因此列位必须在 Localize 之后的显示文本上测量与注入。
+            var display = new Dictionary<TMP_Text, string>();
             foreach (KeyValuePair<TMP_Text, int> kv in cells)
             {
-                string s = kv.Key.text;
-                if (string.IsNullOrEmpty(s))
+                string m = kv.Key.text ?? string.Empty;
+                if (string.IsNullOrEmpty(m))
                     continue;
-                if (s.Contains("<pos="))
+                if (m.Contains("<pos="))
                 {
-                    int p = s.IndexOf("<pos=");
-                    int q = s.IndexOf('>', p);
-                    if (q <= p)
-                        continue;
-                    s = s.Substring(0, p) + s.Substring(q + 1); // 剥旧列位标签，重测
+                    int p = m.IndexOf("<pos=");
+                    int q = m.IndexOf('>', p);
+                    if (q > p)
+                        m = m.Substring(0, p) + m.Substring(q + 1);
                 }
-                texts[kv.Key] = s;
+                string d = m;
+                if (localizer != null && !Core.TextLocalizer.HasChinese(m))
+                {
+                    try { d = localizer.Localize(m, PatchHelpers.ScopeOf(kv.Key)) ?? m; }
+                    catch { /* 本地化器异常时按原文处理 */ }
+                }
+                display[kv.Key] = d;
+            }
 
+            // 第一遍：在显示文本上实测标签宽（定数值列位）与左格全文宽（定右列起点）
+            float posLeft = 0f, posRight = 0f, colC = 0f;
+            foreach (KeyValuePair<TMP_Text, int> kv in cells)
+            {
+                if (!display.TryGetValue(kv.Key, out string s))
+                    continue;
                 float fs = kv.Key.fontSize > 0f ? kv.Key.fontSize : 18f;
-                float pad = Mathf.Max(8f, fs * 0.6f);
+                float pad = Mathf.Max(10f, fs * 0.7f);
                 int idx = IndexOfColon(s);
                 if (idx < 0)
                 {
                     // 无标签的纯值文本（如制导）：计入左格内容宽度（决定右列起点）
                     if (kv.Value == 0)
-                        colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 26f);
+                        colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 10f);
                     continue;
                 }
                 float labelW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs) + pad;
                 if (kv.Value == 0)
                 {
                     posLeft = Mathf.Max(posLeft, labelW);
-                    colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 26f);
+                    colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 10f);
                 }
                 else
                 {
@@ -222,13 +242,14 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             posLeft = Mathf.Round(posLeft);
             posRight = Mathf.Round(posRight);
-            colC = Mathf.Clamp(Mathf.Round(colC), 170f, 300f);
+            colC = Mathf.Clamp(Mathf.Round(colC), 145f, 280f);
             TableGeom[id] = new[] { posLeft, posRight, colC };
 
-            // 第二遍：注入每列共享的列位标签
+            // 第二遍：把显示文本（含每列共享列位标签）写回 —— 已是中文，
+            // 翻译管线对其恒等；下次 DisplayInfo 会被游戏重写为新原文，无残留。
             foreach (KeyValuePair<TMP_Text, int> kv in cells)
             {
-                if (!texts.TryGetValue(kv.Key, out string s))
+                if (!display.TryGetValue(kv.Key, out string s))
                     continue;
                 int idx = IndexOfColon(s);
                 if (idx < 0)
@@ -284,7 +305,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
     internal static class WeaponInfoCardStabilizer
     {
         /// <summary>无表格几何时的右列起点回落值（局部 px，相对行左缘）。</summary>
-        private const float FallbackColC = 180f;
+        private const float FallbackColC = 160f;
 
         private sealed class StatCell
         {
@@ -371,11 +392,12 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
                 bool adapted = WeaponInfoCardPatches.Pins.Count == 3 && (
                     Differs(WeaponInfoCardPatches.Pins["imageArea"], img) ||
-                    Differs(WeaponInfoCardPatches.Pins["infoArea"], new[] { inf[0], inf[1], 0f, 0f }) ||
+                    Differs(WeaponInfoCardPatches.Pins["infoArea"], new[] { inf[0], inf[1] - 8f, 0f, 0f }) ||
                     Differs(WeaponInfoCardPatches.Pins["description"], des));
 
                 WeaponInfoCardPatches.Pins["imageArea"] = img;
-                WeaponInfoCardPatches.Pins["infoArea"] = new[] { inf[0], inf[1], 0f, 0f };
+                // 参数区相对图片下移 8px（垂直居中对齐，2026-09-27 用户裁决）
+                WeaponInfoCardPatches.Pins["infoArea"] = new[] { inf[0], inf[1] - 8f, 0f, 0f };
                 WeaponInfoCardPatches.Pins["description"] = des;
 
                 WeaponInfoCardPatches.DetachFromLayout(imageArea);
@@ -511,7 +533,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         }
 
         /// <summary>参数表内容预留宽度（世界尺度，含最长参数串 + 余量）。</summary>
-        private const float ContentAllowance = 180f;
+        private const float ContentAllowance = 160f;
 
         /// <summary>
         /// 表格化后参数区变宽：若描述起点侵入参数区（窄卡，v6 实测挂架面板），
@@ -529,14 +551,14 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             float scale = desc.lossyScale.x;
             // 右格此刻已被 ApplyCellLayout 移到 colC：预留 = 右格数值列位 + 数值宽余量
             float allowance = WeaponInfoCardPatches.TableGeom.TryGetValue(id, out float[] tg)
-                ? tg[1] + 80f
+                ? tg[1] + 50f
                 : ContentAllowance;
             float paramsRight = float.MinValue;
             foreach (StatCell c in st.Cells)
                 paramsRight = Mathf.Max(paramsRight, LeftWorldX(c.Rt));
             paramsRight += allowance * scale;
 
-            float deltaWorld = paramsRight + 16f * scale - LeftWorldX(desc);
+            float deltaWorld = paramsRight + 10f * scale - LeftWorldX(desc);
             if (deltaWorld <= 0f)
                 return; // 宽卡：无需让位
 
