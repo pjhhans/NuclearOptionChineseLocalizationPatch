@@ -27,7 +27,7 @@ namespace NuclearOptionChineseLocalizationPatch
     {
         internal const string Guid = "com.nuclearoption.zhcn.localization";
         internal const string PluginName = "Nuclear Option Chinese Localization Patch";
-        internal const string PluginVersion = "1.6.0";
+        internal const string PluginVersion = "1.6.1";
 
         // ------------------------------------------------------------------
         // 数据一律挂在静态属性上。
@@ -65,6 +65,7 @@ namespace NuclearOptionChineseLocalizationPatch
             Localizer.Enabled = Settings.Enabled.Value;
             Localizer.SetCacheLimit(Settings.TranslationCacheLimit.Value);
             Patching.PylonDropdownPatches.Enabled = Settings.WidenWeaponDropdown.Value;
+            Patching.WeaponInfoCardPatches.Enabled = Settings.FixWeaponInfoCard.Value;
 
             RuntimeStatus.DataDir = PluginPaths.BaseDir;
             // 兜底扫描默认关闭（0）：补丁路径已覆盖绝大多数文本，周期性全内存枚举

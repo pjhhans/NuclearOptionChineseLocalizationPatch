@@ -16,6 +16,7 @@ namespace NuclearOptionChineseLocalizationPatch.Configuration
         internal readonly ConfigEntry<bool> LogMisses;
         internal readonly ConfigEntry<float> ScanIntervalSeconds;
         internal readonly ConfigEntry<bool> WidenWeaponDropdown;
+        internal readonly ConfigEntry<bool> FixWeaponInfoCard;
 
         internal ModSettings(ConfigFile config)
         {
@@ -57,6 +58,12 @@ namespace NuclearOptionChineseLocalizationPatch.Configuration
                 "挂架武器下拉列表宽度自适应：弹出列表装不下中文武器名时自动加宽到刚好够"
                 + "（收起态按钮不变；超出屏幕右缘由 TMP 自带的翻转逻辑处理）。"
                 + "顺带把该列表滚动条方向规范化为 BottomToTop——游戏预制体方向是反的，属游戏 bug。");
+
+            FixWeaponInfoCard = config.Bind(
+                "UI", "FixWeaponInfoCard", true,
+                "基地武器信息卡几何稳定：切换武器时描述与参数行数不同会导致参数漂移，"
+                + "开启后按首次布局固定描述与六个统计槽的位置和尺寸，切换武器时参数不再移动。"
+                + "描述过长时保持原高度（超出部分可能不显示）。");
         }
     }
 }
