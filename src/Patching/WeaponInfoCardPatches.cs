@@ -213,15 +213,15 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             }
 
             // 第一遍：在显示文本上实测标签宽（定数值列位）与左格全文宽（定右列起点）
+            // 列位 = 列内最宽标签 + 内边距，全列共享 —— 对齐是表格的根本
+            // （v14 的有界间距让每格各排各的，用户实测否决：数值必须跨行对齐）。
             float posLeft = 0f, posRight = 0f, colC = 0f;
-            var ownLabel = new Dictionary<TMP_Text, float>(); // 各格自身标签宽（有界间距用）
-            var ownFs = new Dictionary<TMP_Text, float>();
             foreach (KeyValuePair<TMP_Text, int> kv in cells)
             {
                 if (!display.TryGetValue(kv.Key, out string s))
                     continue;
                 float fs = kv.Key.fontSize > 0f ? kv.Key.fontSize : 18f;
-                float pad = Mathf.Max(10f, fs * 0.7f);
+                float pad = Mathf.Max(8f, fs * 0.5f); // 内边距收紧（缓解短标签行冒号后空白）
                 int idx = IndexOfColon(s);
                 if (idx < 0)
                 {
@@ -230,10 +230,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                         colC = Mathf.Max(colC, CellWidth(kv.Key, s, fs) + 10f);
                     continue;
                 }
-                float ownW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs);
-                ownLabel[kv.Key] = ownW;
-                ownFs[kv.Key] = fs;
-                float labelW = ownW + pad;
+                float labelW = CellWidth(kv.Key, s.Substring(0, idx + 1), fs) + pad;
                 if (kv.Value == 0)
                 {
                     posLeft = Mathf.Max(posLeft, labelW);
@@ -250,10 +247,8 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             colC = Mathf.Clamp(Mathf.Round(colC), 145f, 280f);
             TableGeom[id] = new[] { posLeft, posRight, colC };
 
-            // 第二遍：把显示文本（含列位标签）写回 —— 已是中文，
+            // 第二遍：把显示文本（含每列共享列位标签）写回 —— 已是中文，
             // 翻译管线对其恒等；下次 DisplayInfo 会被游戏重写为新原文，无残留。
-            // 列位取「列共享位」与「自身标签宽 + 间距上限」的较小者：短标签行
-            // （装药:/花费:）不再被最宽标签（攻击距离:）拉出大段空白（2026-09-27 用户裁决）。
             foreach (KeyValuePair<TMP_Text, int> kv in cells)
             {
                 if (!display.TryGetValue(kv.Key, out string s))
@@ -261,11 +256,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 int idx = IndexOfColon(s);
                 if (idx < 0)
                     continue;
-                float colPos = kv.Value == 0 ? posLeft : posRight;
-                float fs = ownFs.TryGetValue(kv.Key, out float f) ? f : 18f;
-                float own = ownLabel.TryGetValue(kv.Key, out float w) ? w : 0f;
-                float gapMax = Mathf.Max(18f, fs * 1.2f);
-                float pos = Mathf.Min(colPos, own + gapMax);
+                float pos = kv.Value == 0 ? posLeft : posRight;
                 kv.Key.text = s.Substring(0, idx + 1) + "<pos=" + Mathf.RoundToInt(pos) + ">"
                     + s.Substring(idx + 1).TrimStart();
             }
@@ -638,6 +629,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             string bestName = null;
             float bestLeft = float.PositiveInfinity;
+            var candidates = new List<string>();
             Transform gp = pr.parent;
             if (gp != null)
             {
@@ -646,9 +638,12 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     if (sib == pr || !(sib is RectTransform sr) || !sr.gameObject.activeInHierarchy)
                         continue;
                     Rect sw = WorldRect(sr);
-                    // 须在本段右半之外、且与本段垂直重叠，才算「右侧相邻面板」
-                    bool rightOf = sw.xMin > prW.xMin + prW.width * 0.5f;
-                    bool vOverlap = sw.yMin < prW.yMax - 1f && sw.yMax > prW.yMin + 1f;
+                    candidates.Add(string.Format("{0}[{1:F0}-{2:F0},y{3:F0}-{4:F0}]", sr.name, sw.xMin, sw.xMax, sw.yMin, sw.yMax));
+                    // 须在本段右侧 35% 之外、且与本段垂直重叠，才算「右侧相邻面板」
+                    // （0.5 时 v14 实测漏检：Darkener 宽 1170，中点 1562 越过了面板左缘 ~1940 之前的判断余量，
+                    // 放宽到 0.35 提高召回；落选候选全量进日志，选错下一轮有据可查）
+                    bool rightOf = sw.xMin > prW.xMin + prW.width * 0.35f;
+                    bool vOverlap = sw.yMin < prW.yMax - 2f && sw.yMax > prW.yMin + 2f;
                     if (rightOf && vOverlap && sw.xMin < bestLeft)
                     {
                         bestLeft = sw.xMin;
@@ -660,6 +655,10 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             {
                 rightWorld = Mathf.Min(rightWorld, bestLeft - 14f * scale);
                 boundaryLog = string.Format("右侧面板 {0} 左缘 {1:F0}", bestName, bestLeft);
+            }
+            else
+            {
+                boundaryLog = "无右侧面板（候选: " + string.Join(" | ", candidates) + "）";
             }
             return rightWorld;
         }
@@ -678,11 +677,25 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             float scale = desc.lossyScale.x;
 
+            // ① 禁自身 ContentSizeFitter —— v14 实测证据：钉死位置生效（文字起点对）
+            //    但钉死宽度失效（文本折行点在 ~2 倍钉宽处）：布局引擎在渲染期按文本
+            //    把矩形重新撑大，我们的宽度每帧被覆盖。fitter 不禁，钉宽全是空话。
+            // ② 强制自动换行 —— 长行必须在矩形右缘折行，否则溢出被裁。
+            ContentSizeFitter fitter = desc.GetComponent<ContentSizeFitter>();
+            if (fitter != null && (fitter.horizontalFit != ContentSizeFitter.FitMode.Unconstrained
+                || fitter.verticalFit != ContentSizeFitter.FitMode.Unconstrained))
+            {
+                fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
+                Diagnostics.Log.Info("[信息卡·表格] 描述自身 ContentSizeFitter 已禁用（矩形曾被文本反向撑大，钉宽失效）");
+            }
+
             TMP_Text dtmp = desc.GetComponent<TMP_Text>();
-            if (dtmp != null && !dtmp.enableWordWrapping)
+            if (dtmp != null && (!dtmp.enableWordWrapping || dtmp.overflowMode != TextOverflowModes.Overflow))
             {
                 dtmp.enableWordWrapping = true;
-                Diagnostics.Log.Info("[信息卡·表格] 描述原本禁换行，已强制开启（修右缘裁字）");
+                dtmp.overflowMode = TextOverflowModes.Overflow;
+                Diagnostics.Log.Info("[信息卡·表格] 描述强制自动换行（修右缘溢出/裁字）");
             }
 
             // 参数区右缘（世界）：格左缘最大值 + 参数块整体平移 + 内容预留
@@ -721,6 +734,12 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 return;
 
             float scale = desc.lossyScale.x;
+            ContentSizeFitter fitter0 = desc.GetComponent<ContentSizeFitter>();
+            if (fitter0 != null && fitter0.horizontalFit != ContentSizeFitter.FitMode.Unconstrained)
+            {
+                fitter0.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                Diagnostics.Log.Info("[信息卡·表格] 无武器：描述 ContentSizeFitter 已禁用");
+            }
             float nativeLeftWorld = LeftWorldX(desc);
             float nativeRightWorld = nativeLeftWorld + dpin[2] * scale;
             float rightWorld = DescriptionRightLimitWorld(desc, nativeRightWorld, scale, out string boundaryLog);
