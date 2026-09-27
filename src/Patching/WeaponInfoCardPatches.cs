@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Reflection;
-using System.Runtime.CompilerServices;
+using System.Text;
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
@@ -9,27 +9,28 @@ using UnityEngine.UI;
 namespace NuclearOptionChineseLocalizationPatch.Patching
 {
     /// <summary>
-    /// 基地武器信息卡（<c>AircraftSelectionMenu.DisplayInfo</c>）的几何稳定化。
+    /// 基地武器信息卡（<c>AircraftSelectionMenu.DisplayInfo</c>）的几何稳定化 v2。
     ///
     /// <para><b>问题（IL 实证 + 实机截图）：</b>DisplayInfo 每次切换武器都全量重写
     /// 描述（<c>info.description</c>）与六个统计槽（weaponSeeker/Range/AP/HE/RCS/Cost，
     /// 无武器时 RCS 槽复用为 <c>M: </c> 单发质量、Cost 槽写 <c>C: </c> 花费）。
-    /// 各武器描述行数与参数行数不同，布局系统随内容重排 —— 切换武器时参数
-    /// 相对位置漂移、描述区高度跳变。</para>
+    /// 武器图片区随图标纵横比伸缩、描述随内容伸缩，布局引擎随之重排 ——
+    /// 参数块与描述的位置、宽度随武器漂移。</para>
     ///
-    /// <para><b>修法（吸取 PylonDropdown v5-v8 教训）：</b>
-    /// ① 菜单实例首次 DisplayInfo 时记录各控件的 anchoredPosition + 尺寸
-    /// （此时为预制体设计位置；隐藏/零尺寸时不记录，防锚定到未布局状态）；
-    /// ② 此后每次刷新把记录几何回放回去 —— 尺寸用
-    /// <see cref="RectTransform.SetSizeWithCurrentAnchors"/>（拉伸锚链安全、幂等），
-    /// 位置直接写 anchoredPosition；
-    /// ③ 首次钳制时把描述与统计槽到最近公共祖先之间链上的
-    /// LayoutGroup 内容控制与 ContentSizeFitter 禁用 —— 否则重排在下一帧
-    /// 覆盖钳制（v5「读回不变」的教训）。禁用不重置子 rect 位置，故初始
-    /// 布局保持原样。</para>
+    /// <para><b>v2 语义（用户裁决）：</b>参数块始终靠近左侧武器图片且位置固定；
+    /// 参数块与描述的宽度固定。</para>
     ///
-    /// <para>诊断日志全部 Debug 级；首轮实机以「回放是否被覆盖」读回值判断布局
-    /// 驱动者，再决定后续迭代方向。</para>
+    /// <para><b>实现（v1「按实例首记」缺陷的修正）：</b>
+    /// ① <b>全局共享几何表</b> —— 首个有效实例记录一次，此后所有实例、所有武器、
+    /// 所有打开菜单都回放同一份（v1 按实例 ConditionalWeakTable，每次重开菜单
+    /// 重新首记，几何跨实例不一致）；
+    /// ② <b>脱离布局引擎</b> —— 每个被钳控件挂 <see cref="LayoutElement"/>
+    /// <c>ignoreLayout=true</c> 并禁用自身 <see cref="ContentSizeFitter"/>，
+    /// 父级 LayoutGroup 跳过它（比禁父级 layout 安全，不波及兄弟控件），
+    /// 否则回放在下一帧被覆盖；
+    /// ③ <b>图片区宽度一并钳制</b>（weaponImageArea）—— 图片区伸缩是参数列
+    /// 漂移源头之一；
+    /// ④ 首记时一次性输出 Info 级层级转储（Debug 级默认静默，实机不可见）。</para>
     /// </summary>
     [HarmonyPatch]
     internal static class WeaponInfoCardPatches
@@ -45,26 +46,29 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         private static FieldInfo _infoField;
         private static FieldInfo[] _statFields;
         private static FieldInfo _descriptionField;
+        private static FieldInfo _imageAreaField;
 
-        /// <summary>菜单实例 → 控件键 → {x, y, w, h} 首见几何。</summary>
-        private static readonly ConditionalWeakTable<object, Dictionary<string, float[]>> Pins =
-            new ConditionalWeakTable<object, Dictionary<string, float[]>>();
+        /// <summary>
+        /// 全局共享几何：控件键 → {x, y, w, h}。首个有效实例记录，
+        /// 之后所有实例回放同一份 —— 跨打开菜单、跨武器一致。
+        /// </summary>
+        private static readonly Dictionary<string, float[]> Pins = new Dictionary<string, float[]>();
 
-        private static readonly ConditionalWeakTable<object, object> ReflowHandled =
-            new ConditionalWeakTable<object, object>();
+        private static bool _hierarchyDumped;
 
         private static IEnumerable<MethodBase> TargetMethods()
         {
             var type = AccessTools.TypeByName("AircraftSelectionMenu");
             if (type == null)
             {
-                Diagnostics.Log.Debug("[信息卡] 未找到 AircraftSelectionMenu，补丁空转");
+                Diagnostics.Log.Info("[信息卡] 未找到 AircraftSelectionMenu，补丁空转");
                 yield break;
             }
 
             if (_statFields == null)
             {
                 _infoField = AccessTools.Field(type, "info");
+                _imageAreaField = AccessTools.Field(type, "weaponImageArea");
                 _statFields = new FieldInfo[StatFieldNames.Length];
                 for (int i = 0; i < StatFieldNames.Length; i++)
                     _statFields[i] = AccessTools.Field(type, StatFieldNames[i]);
@@ -100,11 +104,15 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             {
                 foreach (FieldInfo f in _statFields)
                 {
-                    var tmp = f?.GetValue(__instance) as TMP_Text;
-                    if (tmp != null)
-                        targets.Add(new KeyValuePair<string, RectTransform>(f.Name, tmp.rectTransform));
+                    RectTransform rt = ToRect(f?.GetValue(__instance));
+                    if (rt != null)
+                        targets.Add(new KeyValuePair<string, RectTransform>(f.Name, rt));
                 }
             }
+
+            RectTransform imageArea = ToRect(_imageAreaField?.GetValue(__instance));
+            if (imageArea != null)
+                targets.Add(new KeyValuePair<string, RectTransform>("imageArea", imageArea));
 
             object info = _infoField?.GetValue(__instance);
             if (info != null)
@@ -116,42 +124,70 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     targets.Add(new KeyValuePair<string, RectTransform>("description", desc.rectTransform));
             }
 
-            if (targets.Count == 0)
-                return;
-
-            Dictionary<string, float[]> pins = Pins.GetOrCreateValue(__instance);
-            bool firstRun = false;
-
             foreach (KeyValuePair<string, RectTransform> kv in targets)
             {
                 RectTransform rt = kv.Value;
                 if (rt == null)
                     continue;
 
-                if (!pins.TryGetValue(kv.Key, out float[] pin))
+                DetachFromLayout(rt);
+
+                if (!Pins.TryGetValue(kv.Key, out float[] pin))
                 {
                     // 防锚定到未布局状态：隐藏或零尺寸不记录
                     if (!rt.gameObject.activeInHierarchy || rt.rect.width < 1f)
                         continue;
-                    pins[kv.Key] = new[]
+                    Pins[kv.Key] = new[]
                     {
                         rt.anchoredPosition.x, rt.anchoredPosition.y, rt.rect.width, rt.rect.height,
                     };
-                    Diagnostics.Log.Debug(string.Format(
+                    Diagnostics.Log.Info(string.Format(
                         "[信息卡·首记] {0}: {1:F0}x{2:F0} @ ({3:F0},{4:F0})",
                         kv.Key, rt.rect.width, rt.rect.height,
                         rt.anchoredPosition.x, rt.anchoredPosition.y));
-                    firstRun = true;
+                    if (!_hierarchyDumped)
+                    {
+                        _hierarchyDumped = true;
+                        DumpHierarchy(targets);
+                    }
                     continue;
                 }
 
                 Apply(rt, kv.Key, pin);
             }
+        }
 
-            if (firstRun && !ReflowHandled.TryGetValue(__instance, out _))
+        private static RectTransform ToRect(object value)
+        {
+            if (value is RectTransform rt)
+                return rt;
+            if (value is GameObject go)
+                return go.GetComponent<RectTransform>();
+            if (value is Component comp)
+                return comp.GetComponent<RectTransform>();
+            return null;
+        }
+
+        /// <summary>
+        /// 让控件彻底脱离布局引擎：父级 LayoutGroup 跳过它（ignoreLayout），
+        /// 自身不再随内容自适应（禁 fitter）。不改其它控件，比禁父级 layout 安全。
+        /// </summary>
+        private static void DetachFromLayout(RectTransform rt)
+        {
+            ContentSizeFitter fitter = rt.GetComponent<ContentSizeFitter>();
+            if (fitter != null && fitter.enabled)
             {
-                DisableReflow(targets);
-                ReflowHandled.Add(__instance, null);
+                fitter.enabled = false;
+                Diagnostics.Log.Debug("[信息卡] 禁用自身 ContentSizeFitter: " + rt.name);
+            }
+
+            LayoutElement le = rt.GetComponent<LayoutElement>();
+            if (le == null)
+                le = rt.gameObject.AddComponent<LayoutElement>();
+            if (!le.ignoreLayout)
+            {
+                le.ignoreLayout = true;
+                Diagnostics.Log.Debug("[信息卡] ignoreLayout = true: " + rt.name);
             }
         }
 
@@ -186,66 +222,39 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     rt.anchoredPosition.x, rt.anchoredPosition.y, pin[2], pin[3], pin[0], pin[1]));
         }
 
-        /// <summary>
-        /// 禁用描述与统计槽到最近公共祖先之间链上的布局重排，
-        /// 范围外（面板公共父以上）一律不碰。
-        /// </summary>
-        private static void DisableReflow(List<KeyValuePair<string, RectTransform>> targets)
+        /// <summary>首记时一次性输出层级转储（Info 级，实机可见），供后续迭代定位布局驱动者。</summary>
+        private static void DumpHierarchy(List<KeyValuePair<string, RectTransform>> targets)
         {
-            RectTransform desc = null;
-            RectTransform stat = null;
+            var sb = new StringBuilder("[信息卡·层级] ");
             foreach (KeyValuePair<string, RectTransform> kv in targets)
             {
-                if (kv.Value == null)
+                RectTransform rt = kv.Value;
+                if (rt == null)
                     continue;
-                if (kv.Key == "description" && desc == null)
-                    desc = kv.Value;
-                else if (stat == null)
-                    stat = kv.Value;
+                sb.Append("\n  ").Append(kv.Key).Append(" = ").Append(PathOf(rt, 4));
             }
-            if (desc == null || stat == null)
-                return;
-
-            Transform lca = CommonAncestor(desc, stat);
-            if (lca == null)
-                return;
-
-            foreach (KeyValuePair<string, RectTransform> kv in targets)
-            {
-                Transform cur = kv.Value != null ? kv.Value.parent : null;
-                int guard = 0;
-                while (cur != null && cur != lca && guard++ < 6)
-                {
-                    GameObject go = cur.gameObject;
-                    ContentSizeFitter fitter = go.GetComponent<ContentSizeFitter>();
-                    if (fitter != null && fitter.enabled)
-                    {
-                        fitter.enabled = false;
-                        Diagnostics.Log.Debug("[信息卡] 禁用 ContentSizeFitter: " + go.name);
-                    }
-                    var lg = go.GetComponent<HorizontalOrVerticalLayoutGroup>();
-                    if (lg != null && lg.enabled)
-                    {
-                        lg.childControlWidth = false;
-                        lg.childControlHeight = false;
-                        lg.childForceExpandWidth = false;
-                        lg.childForceExpandHeight = false;
-                        Diagnostics.Log.Debug("[信息卡] 禁用 LayoutGroup 内容控制: " + go.name);
-                    }
-                    cur = cur.parent;
-                }
-            }
+            Diagnostics.Log.Info(sb.ToString());
         }
 
-        private static Transform CommonAncestor(Transform a, Transform b)
+        private static string PathOf(RectTransform rt, int up)
         {
-            var chain = new HashSet<Transform>();
-            for (Transform t = a.parent; t != null; t = t.parent)
-                chain.Add(t);
-            for (Transform t = b.parent; t != null; t = t.parent)
-                if (chain.Contains(t))
-                    return t;
-            return null;
+            var sb = new StringBuilder();
+            Transform cur = rt;
+            int guard = 0;
+            while (cur != null && guard <= up)
+            {
+                var crt = cur as RectTransform;
+                string geo = crt != null
+                    ? string.Format("{0}x{1}@({2:F0},{3:F0})", crt.rect.width, crt.rect.height,
+                        crt.anchoredPosition.x, crt.anchoredPosition.y)
+                    : "?";
+                string comps = crt != null && crt.GetComponent<LayoutGroup>() != null ? "+LG" : "";
+                comps += crt != null && crt.GetComponent<ContentSizeFitter>() != null ? "+Fitter" : "";
+                sb.Insert(0, string.Format("{0}[{1}{2}] <- ", cur.name, geo, comps));
+                cur = cur.parent;
+                guard++;
+            }
+            return sb.ToString().TrimEnd('<', '-');
         }
     }
 }
