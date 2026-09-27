@@ -319,6 +319,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         private sealed class InstState
         {
             public readonly List<StatCell> Cells = new List<StatCell>();
+            public float ParamShift; // 参数块整体平移量（世界 px，负=向左），供 FitDescription 修正
         }
 
         private static readonly HashSet<int> _pinnedInstances = new HashSet<int>();
@@ -420,6 +421,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 _degenerateFrames = 0;
 
                 ArrangeStatCells(id, instance);
+                AlignParamBlock(id, imageArea, infoArea);
                 FitDescription(id, desc);
 
                 float[] dp = WeaponInfoCardPatches.Pins["description"];
@@ -532,6 +534,44 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             }
         }
 
+        /// <summary>参数列与图片右缘的目标间距（infoArea 局部 px）。</summary>
+        private const float ParamGap = 18f;
+
+        /// <summary>
+        /// 参数块整体平移贴向图片（2026-09-27 用户裁决「参数左边空得有点大」）：
+        /// infoArea 原生 x 距图片右缘仅 ~10px，但其行/单元格内部还有居中偏移
+        /// （v10 实机实测左列标签距图片右缘 ~158px）。按「左列左缘 = 图片右缘 +
+        /// <see cref="ParamGap"/>」求世界位移，加到 infoArea 钉死 x 上（所有行/格
+        /// 均为 infoArea 子孙，整体平移，下一帧回放生效）。平移量记入
+        /// <see cref="InstState.ParamShift"/>，供 <see cref="FitDescription"/> 修正。
+        /// </summary>
+        private static void AlignParamBlock(int id, RectTransform imageArea, RectTransform infoArea)
+        {
+            if (imageArea == null || infoArea == null
+                || !_instStates.TryGetValue(id, out InstState st)
+                || !WeaponInfoCardPatches.Pins.TryGetValue("infoArea", out float[] pin))
+                return;
+
+            float minLeft = float.MaxValue;
+            foreach (StatCell c in st.Cells)
+                if (c.Col == 0)
+                    minLeft = Mathf.Min(minLeft, LeftWorldX(c.Rt));
+            if (minLeft == float.MaxValue)
+                return;
+
+            float imgRight = imageArea.position.x
+                + (1f - imageArea.pivot.x) * imageArea.rect.width * imageArea.lossyScale.x;
+            float deltaWorld = imgRight + ParamGap * infoArea.lossyScale.x - minLeft;
+            deltaWorld = Mathf.Clamp(deltaWorld, -300f, 60f);
+            if (Mathf.Abs(deltaWorld) < 2f)
+                return;
+
+            st.ParamShift = deltaWorld;
+            pin[0] += deltaWorld / infoArea.lossyScale.x;
+            Diagnostics.Log.Info(string.Format("[信息卡·表格] 参数块平移 {0:F0}px 贴近图片（目标间距 {1:F0}px）",
+                deltaWorld / infoArea.lossyScale.x, ParamGap));
+        }
+
         /// <summary>参数表内容预留宽度（世界尺度，含最长参数串 + 余量）。</summary>
         private const float ContentAllowance = 160f;
 
@@ -556,6 +596,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             float paramsRight = float.MinValue;
             foreach (StatCell c in st.Cells)
                 paramsRight = Mathf.Max(paramsRight, LeftWorldX(c.Rt));
+            paramsRight += st.ParamShift; // 参数块整体平移后，右缘同步移动
             paramsRight += allowance * scale;
 
             float deltaWorld = paramsRight + 10f * scale - LeftWorldX(desc);
