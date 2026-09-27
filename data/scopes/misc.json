@@ -14,8 +14,10 @@
   "[Revealed_TargetList_Label]TargetList": "目标列表",
   "[Revealed_briefing_Label]briefing": "简报",
   "[Subtitle]SYSTEM BOOT ......": "系统启动 ......",
+  "[cost_value]C": "花费",
   "[description value]A great place for new players to learn the ropes. The description would highlight the helpful community and the cooperative nature of the missions.": "适合新玩家熟悉游戏的好地方。这段描述会突出乐于助人的社区氛围以及任务的合作性质。",
   "[h3]Lobby Name": "大厅名称",
   "[map Value]ignus archipeglago": "伊格尼斯群岛",
-  "[mission Value]Mountian Pass": "山口"
+  "[mission Value]Mountian Pass": "山口",
+  "[range_value]R": "攻击距离"
 }
