@@ -73,7 +73,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 FixScrollbarDirection(dd.template);
 
                 _tracked.Add(dd);
-                Diagnostics.Log.Info(string.Format(
+                Diagnostics.Log.Debug(string.Format(
                     "[挂架下拉·量测] 模板 {0:F0}px，标签 {1:F0}px，最长译文 {2:F0}px（按自适应上限字号），层级 {3}",
                     dd.template.rect.width, dd.itemText.rectTransform.rect.width,
                     MeasureMaxOptionWidth(dd),
@@ -211,7 +211,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                         t.font != null ? t.font.name : "null");
                     shown++;
                 }
-                Diagnostics.Log.Info(sb.ToString());
+                Diagnostics.Log.Debug(sb.ToString());
 
                 // ---- 加宽（v8）----
                 float required = PylonDropdownPatches.MeasureMaxOptionWidth(__instance)
@@ -264,11 +264,11 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     ClampIntoCanvas(popupRt);
 
                     // 读回验证：若仍等于旧值，说明宽度另有来源，转储整条链定位
-                    Diagnostics.Log.Info(string.Format(
+                    Diagnostics.Log.Debug(string.Format(
                         "[挂架下拉] 已加宽 +{0:F0}px，读回：根 {1:F0}px / 标签 {2:F0}px（目标 {3:F0}px）",
                         delta, popupRt.rect.width,
                         firstLabel.rectTransform.rect.width, required));
-                    Diagnostics.Log.Info("[挂架下拉·链] " + DumpChain(chain));
+                    Diagnostics.Log.Debug("[挂架下拉·链] " + DumpChain(chain));
                 }
             }
             catch (System.Exception ex)
