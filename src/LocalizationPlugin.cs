@@ -71,27 +71,30 @@ namespace NuclearOptionChineseLocalizationPatch
             // 兜底扫描默认关闭（0）：补丁路径已覆盖绝大多数文本，周期性全内存枚举
             // 只为补「绕过 setter 直接写字段」的少数通路，不值得每个玩家常年在后台付这笔钱。
             // 需要时在 F11 窗口里打开即可，立即生效。
-            SettingsWindow.ScanEnabled = Settings.ScanIntervalSeconds.Value > 0f;
+            Ui.SettingsWindow.ScanEnabled = Settings.ScanIntervalSeconds.Value > 0f;
             float configured = Settings.ScanIntervalSeconds.Value;
-            SettingsWindow.ScanInterval = ClampInterval(configured > 0f ? configured : 1f);
+            Ui.SettingsWindow.ScanInterval = ClampInterval(configured > 0f ? configured : 1f);
 
             ReloadData(initial: true);
             CjkFontProvider.Load();
             WindowKey = ParseKeyCode(Settings.ToggleWindowHotkey.Value);
             ReloadKey = ParseKeyCode(Settings.ReloadDataHotkey.Value);
             ApplyPatches();
+            // 打断 Patching ⇄ Hosting 双向依赖：宿主不引用补丁层，
+            // 防回写补偿（必须晚于游戏自身刷新）改由入口接线注入。
+            Hosting.PluginHost.LateTick += Patching.RewriteGuard.Tick;
             LogHarmonySelfTest();
 
             // 场景加载事件是逐帧宿主的主要重建点：首个真实场景加载会带走
             // 早于它创建的所有对象，宿主必须在这里活过来。
             SceneManager.sceneLoaded += OnSceneLoaded;
-            PluginHost.Ensure();
+            Hosting.PluginHost.Ensure();
 
             Log.Info($"{PluginName} v{PluginVersion} 已启动。{PluginPaths.Describe()}");
             Log.Info($"按 {Settings.ToggleWindowHotkey.Value} 打开设置与诊断窗口。");
             Log.Info($"诊断状态：漏译记录 {(MissLog.Recording ? "开（写 missing.json / untranslated.json）" : "关")}"
                      + $"，最近命中 {(Localizer != null && Localizer.CaptureRecent ? "开" : "关")}"
-                     + $"，兜底扫描 {(SettingsWindow.ScanEnabled ? "开" : "关")}"
+                     + $"，兜底扫描 {(Ui.SettingsWindow.ScanEnabled ? "开" : "关")}"
                      + $"，调试日志 {(Log.Verbose ? "开" : "关")}"
                      + "。（默认只开翻译；需要报漏翻时请在 F11 窗口里打开「累积漏译」）");
         }
@@ -231,8 +234,8 @@ namespace NuclearOptionChineseLocalizationPatch
             RuntimeStatus.SceneLoads++;
             Log.Info($"场景已加载：{scene.name}。");
             // 强制重建：这是宿主最主要的复活点，不能被防抖挡掉。
-            PluginHost.Ensure(force: true);
-            PluginHost.ResetScanBackoff();
+            Hosting.PluginHost.Ensure(force: true);
+            Hosting.PluginHost.ResetScanBackoff();
             CjkFontProvider.Register();
             ScanScene();
         }

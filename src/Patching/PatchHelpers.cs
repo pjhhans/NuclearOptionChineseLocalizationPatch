@@ -3,7 +3,7 @@ using HarmonyLib;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using Host = NuclearOptionChineseLocalizationPatch.Resources.PluginHost;
+using Host = NuclearOptionChineseLocalizationPatch.Hosting.PluginHost;
 
 namespace NuclearOptionChineseLocalizationPatch.Patching
 {

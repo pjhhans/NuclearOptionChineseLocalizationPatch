@@ -4,7 +4,7 @@ using NuclearOptionChineseLocalizationPatch.Diagnostics;
 using NuclearOptionChineseLocalizationPatch.Patching;
 using UnityEngine;
 
-namespace NuclearOptionChineseLocalizationPatch.Resources
+namespace NuclearOptionChineseLocalizationPatch.Ui
 {
     /// <summary>
     /// 设置与诊断窗口（F11 呼出）。

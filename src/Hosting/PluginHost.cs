@@ -1,8 +1,9 @@
 using System;
 using NuclearOptionChineseLocalizationPatch.Diagnostics;
+using NuclearOptionChineseLocalizationPatch.Ui;
 using UnityEngine;
 
-namespace NuclearOptionChineseLocalizationPatch.Resources
+namespace NuclearOptionChineseLocalizationPatch.Hosting
 {
     /// <summary>
     /// 承载所有「必须每帧活着」的逻辑：热键、兜底扫描、防回写驱动、设置窗口。
@@ -20,11 +21,21 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
     ///
     /// <para><b>数据不放在本类。</b>宿主会被销毁重建，任何存在它字段里的状态都会丢；
     /// 词表等一律挂在 <see cref="LocalizationPlugin"/> 的静态属性上。</para>
+    ///
+    /// <para><b>依赖方向。</b>宿主<b>不引用补丁层</b>：每帧的防回写补偿由编排层经
+    /// <see cref="LateTick"/> 接线注入。这打断了历史上 <c>Patching ⇄ Hosting</c> 的双向依赖
+    /// （补丁层调 <see cref="Ensure()"/> 重建宿主，宿主又回头调 <c>RewriteGuard.Tick</c>）。</para>
     /// </summary>
     internal sealed class PluginHost : MonoBehaviour
     {
         private static PluginHost _instance;
         private static float _lastEnsureTime = -999f;
+
+        /// <summary>
+        /// 每帧 <c>LateUpdate</c> 回调（防回写补偿）。由编排层在启动时接线：
+        /// <c>PluginHost.LateTick += Patching.RewriteGuard.Tick;</c>
+        /// </summary>
+        internal static event Action LateTick;
 
         /// <summary>重建防抖间隔。看门狗挂在高频路径上，未命中时必须只花一次静态比较。</summary>
         private const float EnsureDebounceSeconds = 1f;
@@ -42,8 +53,6 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
         /// <summary>上次读到的扫描间隔滑块值，用来检测用户手动改动（改动即复位退避）。</summary>
         private float _lastSliderValue = -1f;
-
-        internal static bool Alive => _instance != null;
 
         /// <summary>场景加载 / 补丁路径翻到新东西时调用：退避立即复位，下次扫描按基础间隔来。</summary>
         internal static void ResetScanBackoff()
@@ -116,10 +125,12 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
         /// <summary>
         /// 防回写补偿必须等游戏本轮 Update 跑完再补，否则抢不过 HUD 自己的刷新循环
         /// （本帧补完、下帧又被覆盖，表现为闪烁）。
+        ///
+        /// <para>具体动作由编排层接线注入（见 <see cref="LateTick"/>），宿主本身不引用补丁层。</para>
         /// </summary>
         private void LateUpdate()
         {
-            Patching.RewriteGuard.Tick();
+            LateTick?.Invoke();
         }
 
         /// <summary>
