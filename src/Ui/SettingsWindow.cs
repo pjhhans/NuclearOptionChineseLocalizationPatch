@@ -202,7 +202,7 @@ namespace NuclearOptionChineseLocalizationPatch.Ui
 
             Row("词表", table == null
                 ? "未载入"
-                : $"共 {table.TotalEntryCount} 条　通用 {table.GlobalCount} ／ 模板 {table.TemplateCount} ／ 片段 {table.FragmentCount}"
+                : $"共 {table.TotalEntryCount} 条（大小写重复键已合并）　通用 {table.GlobalCount} ／ 模板 {table.TemplateCount} ／ 片段 {table.FragmentCount}"
                   + $"　作用域词条 {table.ScopedEntryCount}（{table.ScopeCount} 个）"
                   + $"　模板指纹 {table.TemplateFingerprintCount}（回落命中 {table.TemplateFingerprintHits}）");
 

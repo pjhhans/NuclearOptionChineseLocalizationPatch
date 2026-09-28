@@ -98,11 +98,21 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         private int _minTemplateKeyLength = int.MaxValue;
 
         internal int GlobalCount => _global.Count;
-        internal int TemplateCount => _templates.Count;
+        /// <summary>
+        /// 模板条数：精确模板 + 参数化模板（<c>{#}</c>）。
+        /// 两者只是索引不同，都是真实存在于词表、也真能命中的键，计数必须一并算上。
+        /// </summary>
+        internal int TemplateCount => _templates.Count + _paramTemplates.Count;
         /// <summary>作用域分表里的词条总数（不含分表个数，个数见 <see cref="ScopeCount"/>）。</summary>
         internal int ScopedEntryCount => _scopedEntries;
-        /// <summary>全表词条总数：通用 + 模板 + 片段 + 作用域词条。用于给用户看的「词表 N 条」。</summary>
-        internal int TotalEntryCount => _global.Count + _templates.Count + FragmentCount + _scopedEntries;
+        /// <summary>
+        /// 全表词条总数：通用 + 模板（含参数化）+ 片段 + 作用域词条。用于给用户看的「词表 N 条」。
+        ///
+        /// <para>这是**索引条目数**：键仅大小写不同的会被合并成一条（四个索引都建在
+        /// <see cref="StringComparer.OrdinalIgnoreCase"/> 上），所以会略小于词表文件的原始行数。</para>
+        /// </summary>
+        internal int TotalEntryCount =>
+            _global.Count + _templates.Count + _paramTemplates.Count + FragmentCount + _scopedEntries;
         /// <summary>可用的去标签指纹条数（撞车作废的不计）。</summary>
         internal int TemplateFingerprintCount
         {
