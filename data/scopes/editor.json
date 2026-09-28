@@ -44,6 +44,7 @@
   "[VoteYesButtonLabel]YES": "是",
   "[Voted Text]Vote passed": "投票通过",
   "[WrecksDespawnTimeLabel]No decay": "不衰减",
+  "[description value]A great place for new players to learn the ropes. The description would highlight the helpful community and the cooperative nature of the missions.": "适合新玩家熟悉游戏的好地方。这段描述会突出乐于助人的社区氛围以及任务的合作性质。",
   "[eyeTrackingResponsivenessSliderLabel]Eye Tracking Responsiveness": "眼动追踪响应度",
   "[eyeVsHeadRatioSliderLabel]Eye VS Head Tracking Ratio": "眼动与头部追踪比例",
   "[headSensitivityPitchYawSliderLabel]Head Tracking Pitch & Yaw Sensitivity": "头部追踪俯仰与偏航灵敏度",
@@ -51,5 +52,7 @@
   "[headSensitivityRollSliderLabel]Head Tracking Roll Sensitivity": "头部追踪滚转灵敏度",
   "[interval Slider Text]30 minutes": "30 分钟",
   "[interval Slider Text]5 minutes": "5 分钟",
+  "[map Value]ignus archipeglago": "伊格尼斯群岛",
+  "[mission Value]Mountian Pass": "山口",
   "[sendBytes]kb": "kb"
 }

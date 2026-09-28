@@ -1,6 +1,12 @@
 {
   "[CaptureText]BDF Capturing": "BDF 占领中",
   "[Mission Label]Aircraft Livery": "战机涂装",
+  "[MissionDescription]A fast-paced PvP scenario where BDF must defend their supercarrier fleet in the newly introduced FS-41 Eclipse and PALA must destroy the fleet with advanced supersonic bombers escorted by multirole fighters.": "快节奏的 PvP 场景：BDF 须驾驶新登场的 FS-41 日蚀保卫己方超级航母编队；PALA 则须在多用途战斗机护航下，以先进超音速轰炸机摧毁该编队。",
+  "[MissionDescription]A pair of lighter Helion-class carriers sit at the frontline with accompanying PB escorts.": "两艘较小的赫利昂级航母部署在前线，由 PB 护卫舰伴随。",
+  "[MissionDescription]BBDF's objective is to protect the CSG and destroy a heavily fortified PALA airbase in the occupied Feldspar International Airport.": "BDF 方的目标是保护 CSG，并摧毁位于被占领的长石国际机场、设防坚固的 PALA 空军基地。",
+  "[MissionDescription]Learn how to use the catapults of a Penumbra-class Supercarrier and utilise the FS-41 Eclipse in a high speed combat air patrol to destroy an incoming PALA bomber wave.": "学习使用半影级超级航母的弹射器，驾驶 FS-41 日蚀执行高速战斗空中巡逻，拦截来袭的 PALA 轰炸机编队。",
+  "[MissionDescription]PALA's objective is to destroy the BDF carrier strike group.": "PALA 方的目标是摧毁 BDF 航母打击群。",
+  "[MissionDescription]Two Penumbra-class Supercarriers clash in a battle for the Ignus. Both carriers have their full air wings and light escorts.": "两艘半影级超级航母为争夺伊格尼斯群岛而交锋。双方航母均搭载完整航空联队与轻型护航舰艇。",
   "[MissionSubVersionTitle]SubVersion Title": "子版本标题",
   "[MissionTitle]Carrier Duel Lite": "航母对决轻量版",
   "[MissionTitle]Mission Title": "任务标题",
