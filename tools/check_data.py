@@ -82,6 +82,9 @@ RETIRED_TERMS = {
     #   · ECM = Electronic Countermeasures，与既有「ECM Pod 电子对抗吊舱」对齐；
     #     原文 ECM / RADAR ECM 都归一到「电子对抗」（教程叙述句里的 radar ECM 同步）
     "雷达 ECM": "电子对抗",
+    #   · 对抗措施名词一律「电子对抗」，不得再写「电子干扰」（2026-09-28 用户裁决）
+    #     —— 上轮只扫了英文 ECM 侧，漏掉以 jammers 为原文的美杜莎吊舱描述
+    "电子干扰": "电子对抗",
     # 2026-09-28 用户裁决：连级编制名统一（首版两套写法并存 —— 裸键「连战斗群 / 合成兵种连」
     #   与 scoped「连级战斗队 / 合成化步兵连」，同族混用）
     #   · Armoured Company Group   → 装甲连级战斗群
