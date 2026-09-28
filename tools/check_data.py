@@ -19,6 +19,7 @@ scopes/*.json）都会被读进来，先查每个文件自身的格式，再把�
  10. 布局漂移（硬失败）                   —— 词条是否待在它该待的分类文件里
  11. 作用域分类覆盖（提示级）             —— 新出现的作用域会落到 misc.json，提醒补分类
  12. 模板门禁（提示级）                   —— 最短模板钉死全体文本付不付一次归一化
+ 13. 模板归一化重复（硬失败）             —— `~Foo  Bar` 与 `~Foo Bar` 运行时会静默覆盖
 
 用法:
     python tools/check_data.py [数据目录]
@@ -239,6 +240,36 @@ def check_scope_categories(table):
 PARAM_MARKER = "{#}"
 
 
+def _template_canonical(key):
+    """模板键的运行时归一化形式（复刻 TextCanonicalizer.Canonicalize）。"""
+    s = TAG_RE.sub("\u0001", key[1:])
+    s = s.replace("\r\n", "\n").replace("\r", "\n").replace("\u000b", "\n")
+    return re.sub(r"[ \t]+", " ", s).strip()
+
+
+def check_template_canonical_duplicates(table):
+    """两条模板键**归一化后**相同 ⇒ 运行时后者静默覆盖前者。
+
+    `check_case_duplicates` 只比 `key.lower()`，抓不到「仅空白不同」这一类
+    —— `~Foo  Bar` 与 `~Foo Bar` 归一化后是同一个键，而 `_templates` 是
+    `OrdinalIgnoreCase` 字典，写进去就是覆盖，没有日志。
+    """
+    groups = collections.defaultdict(list)
+    for key in table:
+        if kind_of(key) != KIND_TEMPLATE:
+            continue
+        groups[_template_canonical(key).lower()].append(key)
+    for keys in groups.values():
+        if len(keys) < 2:
+            continue
+        values = {table[k] for k in keys}
+        if len(values) > 1:
+            fail("模板键归一化后重复且译文不同（会静默覆盖）: %r -> %r"
+                 % (sorted(keys), sorted(values)))
+        else:
+            note("模板键归一化后重复（译文相同，仅冗余）: %r" % sorted(keys))
+
+
 def check_template_gate(table):
     """模板门禁 = **最短**那条模板键的归一化长度 —— 报出来，别让它被悄悄拖低。
 
@@ -254,9 +285,7 @@ def check_template_gate(table):
     for key in table:
         if kind_of(key) != KIND_TEMPLATE:
             continue
-        s = TAG_RE.sub("\u0001", key[1:])
-        s = s.replace("\r\n", "\n").replace("\r", "\n").replace("\u000b", "\n")
-        s = re.sub(r"[ \t]+", " ", s).strip()
+        s = _template_canonical(key)
         if not s:
             continue
         # 参数化模板按最短展开（{#} = 1 位数字）计。
@@ -319,6 +348,7 @@ def main():
     check_ship_names(table)
     check_scope_categories(table)
     check_template_gate(table)
+    check_template_canonical_duplicates(table)
     check_layout(data_dir, table)
 
     for item in notes:
