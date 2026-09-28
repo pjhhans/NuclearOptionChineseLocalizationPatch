@@ -117,7 +117,9 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
         private void Update()
         {
             RuntimeStatus.HostAlive = true;
-            // 性能探针的时间基准（默认关；关闭时本调用立即返回，只剩一次静态布尔判断）。
+            // 性能探针的时间基准与帧节奏（默认关；关闭时本调用立即返回，只剩一次静态布尔判断）。
+            // 分配的逐帧采样与帧计数也在这一次调用里顺带完成 —— 请勿移到别处或改成条件调用，
+            // 否则「B/帧」这个视角会失真。
             PerfProbe.FrameTick(Time.realtimeSinceStartup);
             HandleHotkeys();
             HandleScan();
