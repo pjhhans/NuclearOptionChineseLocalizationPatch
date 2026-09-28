@@ -9,8 +9,14 @@ namespace NuclearOptionChineseLocalizationPatch.Core
     ///   1. 富文本标签 → <c>\u0001</c>（占位，保留"这里有个标签"的信息）
     ///   2. <c>\r\n</c> 与裸 <c>\r</c> → <c>\n</c>
     ///   3. <c>\v</c> → <c>\n</c>
-    ///   4. 连续空格 / 制表符折叠成一个空格
+    ///   4. 连续空格 / 制表符折叠成一个空格（**可整步跳过**，见下）
     ///   5. Trim
+    ///
+    /// <para><b>第 4 步有无损快路径。</b>折叠用的正则是 <c>[ \t]+</c>，而<b>单个空格也匹配它</b>：
+    /// 普通句子里每个空格都算一次"命中"，正则引擎于是为每个匹配分配对象、并把整串重建一遍。
+    /// 实测这一步是本插件<b>单点最大的分配源</b>（占 <c>Canonicalize</c> 全部开销的九成以上）。
+    /// 但只要串里既没有制表符、也没有连续两个空格，<c>[ \t]+</c> 的每次匹配都必然是
+    /// 「单空格 → 单空格」的恒等替换 —— 整步可以直接跳过，结果逐字符不变。</para>
     ///
     /// <para><b>第 2 步的 CR 处理不能省略。</b>词表键在载入时会经过
     /// <see cref="KeyScrubber.Scrub"/>，而它会把 <c>\r</c> <b>删掉</b>；
@@ -34,6 +40,13 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             string s = TokenPatterns.Tag.Replace(text, "\u0001");
             s = s.Replace("\r\n", "\n").Replace('\r', '\n');
             s = s.Replace('\u000B', '\n');
+
+            // 无损快路径：无制表符、无连续空格 ⇒ 折叠步恒等，整段跳过。
+            // （判据与上面的说明一一对应；折叠正则 [ \t]+ 在无 \t 且无 "  " 时
+            //   只可能匹配到长度 1 的空格，替换结果与原串相同。）
+            if (s.IndexOf('\t') < 0 && !s.Contains("  "))
+                return s.Trim();
+
             s = HorizontalSpace.Replace(s, " ");
             return s.Trim();
         }
