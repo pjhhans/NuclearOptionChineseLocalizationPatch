@@ -10,6 +10,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
     /// <para><b>这里刻意不打 <c>text</c> getter。</b>旧版 UI.Text 的文本网格是直接读
     /// <c>text</c> 生成的，若把读回值还原成英文，屏上显示也会跟着变回英文 ——
     /// 与 TMP 不同，TMP 的渲染走 <c>m_text</c> 字段，不经过 getter。</para>
+    ///
+    /// <para><b>本类只含补丁方法。</b>公共逻辑走 <see cref="PatchHelpers"/>，不要在本类内新增 helper
+    /// —— 补丁类中的 helper 会被 Harmony 分析器误判（<c>Harmony003</c>）。</para>
     /// </summary>
     [HarmonyPatch]
     internal static class LegacyUiPatches

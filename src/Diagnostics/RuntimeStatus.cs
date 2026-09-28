@@ -10,8 +10,8 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
     /// <c>LocalizationPlugin</c> 会让那个类越来越杂。这里是静态的，任何地方都能写，
     /// 窗口读它不需要拿到任何对象引用。</para>
     ///
-    /// <para>写入方：<see cref="Resources.PluginHost"/> 与 <c>LocalizationPlugin</c>。
-    /// 读取方：<see cref="Resources.SettingsWindow"/>。</para>
+    /// <para>写入方：<see cref="Hosting.PluginHost"/> 与 <c>LocalizationPlugin</c>。
+    /// 读取方：<see cref="Ui.SettingsWindow"/>。</para>
     /// </summary>
     internal static class RuntimeStatus
     {

@@ -18,6 +18,10 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
     ///
     /// <para>TMP_Text 本身没有声明 <c>OnEnable</c>，需要分别在 TextMeshProUGUI 与 TextMeshPro
     /// 两个子类上补。</para>
+    ///
+    /// <para><b>本类只含补丁方法。</b>所有公共逻辑走 <see cref="PatchHelpers"/>，不要在本类内新增
+    /// helper —— Harmony 分析器会把补丁类中的<b>所有</b>方法当候选补丁检查，helper 里对自身参数的
+    /// 赋值会误报 <c>Harmony003</c>。</para>
     /// </summary>
     [HarmonyPatch]
     internal static class TmpPatches
