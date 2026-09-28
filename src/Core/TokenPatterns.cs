@@ -20,6 +20,12 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         internal static readonly Regex Tag = new Regex(@"<[^>]*>", RegexOptions.Compiled);
 
         /// <summary>
+        /// 行分隔符：换行（<c>\n</c>）与垂直制表（<c>\v</c>）。
+        /// 多行文本按它逐行翻译、再原样重组（分隔符本身保留）。
+        /// </summary>
+        internal static readonly Regex LineBreak = new Regex(@"[\n\v]", RegexOptions.Compiled);
+
+        /// <summary>
         /// 分隔符。除了常规标点，还刻意包含：
         ///   <c>T/A-30</c> —— 机型代号里的斜杠不能当分隔符（否则会被切成 T 和 A-30）
         ///   <c>&lt;[^&gt;]+&gt;.*?&lt;/[^&gt;]+&gt;</c> —— 成对标签整体作为一个"不可切"单元
@@ -64,6 +70,18 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// <summary>编号代码：<c>R12 A3</c>。</summary>
         internal static readonly Regex NoiseTechnicalCode = new Regex(
             @"^[RAVHM]\d+(\s+[RAVHM]\d+)*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// 「读数」的形状：<c>3</c> / <c>673 km/h</c> / <c>+1.9</c> / <c>12kJ</c>。
+        /// 单位最长 4 个字符 —— 再长就说明后面跟的是词句，不能当成读数。
+        ///
+        /// <para>排除名单的两处判据共用它：<c>IsExcluded</c> 用它确认「名单条目 + 空格」之后
+        /// 确实是读数（否则 <c>A 155mm slug …</c> 这类整句会被误排除）；<c>IsKeptTerm</c> 用它
+        /// 确认术语之后是读数而非词句（否则 <c>VT-7 Vagrant +1.9</c> 会被整条判成保持英文）。
+        /// 两处都属于「判据放宽一点就会静默吞掉整句」的高危点，故形状收窄且共用同一定义。</para>
+        /// </summary>
+        internal static readonly Regex ReadoutTail = new Regex(
+            @"^[+\-±]?\s*[\d.,]+\s*[a-zA-Z/°%]{0,4}$", RegexOptions.Compiled);
 
         // ---------------------------------------------------------------- 尾缀数值
         /// <summary><c>Version 1.2.3</c> —— 保留版本号，翻译前缀。</summary>

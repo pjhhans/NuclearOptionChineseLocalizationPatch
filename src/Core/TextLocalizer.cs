@@ -199,7 +199,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             if (IsMultiLine(text))
             {
                 string[] lines = text.Split(new[] { '\n', '\u000B' });
-                MatchCollection separators = Regex.Matches(text, @"[\n\v]");
+                MatchCollection separators = TokenPatterns.LineBreak.Matches(text);
                 var sb = new StringBuilder(text.Length + 32);
                 bool changed = false;
 

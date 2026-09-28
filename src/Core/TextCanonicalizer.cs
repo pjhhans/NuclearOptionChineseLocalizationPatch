@@ -22,7 +22,6 @@ namespace NuclearOptionChineseLocalizationPatch.Core
     /// </summary>
     internal static class TextCanonicalizer
     {
-        private static readonly Regex TagPattern = new Regex(@"<[^>]*>", RegexOptions.Compiled);
         private static readonly Regex HorizontalSpace = new Regex(@"[ \t]+", RegexOptions.Compiled);
 
         /// <summary>标签在归一化结果里的占位符。译文中的该字符按序回填原文标签。</summary>
@@ -32,7 +31,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         {
             if (string.IsNullOrEmpty(text)) return string.Empty;
 
-            string s = TagPattern.Replace(text, "\u0001");
+            string s = TokenPatterns.Tag.Replace(text, "\u0001");
             s = s.Replace("\r\n", "\n").Replace('\r', '\n');
             s = s.Replace('\u000B', '\n');
             s = HorizontalSpace.Replace(s, " ");
@@ -67,7 +66,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         {
             if (translation.IndexOf(TagPlaceholder) < 0) return translation;
 
-            MatchCollection tags = TagPattern.Matches(original);
+            MatchCollection tags = TokenPatterns.Tag.Matches(original);
             var sb = new System.Text.StringBuilder(translation.Length + 32);
             int next = 0;
             foreach (char c in translation)

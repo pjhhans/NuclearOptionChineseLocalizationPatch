@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
 
 namespace NuclearOptionChineseLocalizationPatch.Core
 {
@@ -21,8 +20,6 @@ namespace NuclearOptionChineseLocalizationPatch.Core
     /// </summary>
     internal sealed class ExclusionRules
     {
-        private static readonly Regex TagPattern = new Regex(@"<[^>]*>", RegexOptions.Compiled);
-
         /// <summary>术语尾部可能带的标点。去掉后仍是术语即整体放过。</summary>
         private const string TrailingPunctuation = " :.= -/";
 
@@ -136,17 +133,10 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                                    StringComparison.OrdinalIgnoreCase) != 0) continue;
 
                 string rest = trimmed.Substring(candidate.Length + 1).TrimStart();
-                if (rest.Length > 0 && ReadoutTail.IsMatch(rest)) return true;
+                if (rest.Length > 0 && TokenPatterns.ReadoutTail.IsMatch(rest)) return true;
             }
             return false;
         }
-
-        /// <summary>
-        /// 「某项 + 空格开头的读数」里那个'读数'的形状：<c>3</c> / <c>673 km/h</c> / <c>+1.9</c>。
-        /// 单位最长 4 个字符 —— 再长就说明后面跟的是词句，不该整条排除。
-        /// </summary>
-        private static readonly Regex ReadoutTail =
-            new Regex(@"^[+\-±]?\s*[\d.,]+\s*[a-zA-Z/°%]{0,4}$", RegexOptions.Compiled);
 
         /// <summary>
         /// 是否属于「保持英文」的术语。判据是**收窄**的，只有三种形态才算：
@@ -164,7 +154,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             if (string.IsNullOrEmpty(text) || _terms.Count == 0) return false;
 
             string t = StripScopePrefix(text);
-            t = TagPattern.Replace(t, string.Empty).Trim();
+            t = TokenPatterns.Tag.Replace(t, string.Empty).Trim();
             if (t.Length == 0) return false;
 
             if (_terms.Contains(t)) return true;
@@ -208,18 +198,11 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) hasLetter = true;
                 }
                 if (!hasLetter) return true;                             // 纯数字 / 纯符号
-                if (hasDigit && TermReadout.IsMatch(rest)) return true;   // 数字 + 短单位
+                if (hasDigit && TokenPatterns.ReadoutTail.IsMatch(rest)) return true;   // 数字 + 短单位
                 // 其余是「术语后面跟词句」，属正文，继续走后续翻译流程
             }
             return false;
         }
-
-        /// <summary>
-        /// 术语后面那种"读数"的形状：<c>5.2</c> / <c>+1.9</c> / <c>40 km</c> / <c>12kJ</c>。
-        /// 单位最长 4 个字符 —— 再长就说明后面跟的是词而不是单位。
-        /// </summary>
-        private static readonly Regex TermReadout =
-            new Regex(@"^[+\-±]?\s*[\d.,]+\s*[a-zA-Z/°%]{0,4}$", RegexOptions.Compiled);
 
         /// <summary>剥掉形如 <c>[Scope]</c> 的前缀。作用域名长度设为 1–40，避免把正文里的方括号误当作用域。</summary>
         internal static string StripScopePrefix(string text)
