@@ -255,7 +255,7 @@
   "Aircraft should be fuel serviced with MIL-T-83133 Grade NO JP-8 Aviation Fuel. If not available, refer to TB 95-3847-300-10 for alternate fuel.": "飞机应使用 MIL-T-83133 Grade NO JP-8 航空燃油进行燃油服务。如果不可用，请参考 TB 95-3847-300-10 以获取替代燃油。",
   "Aircraft with turreted optical arrays have excellent visual detection capability, and can spot targets from much further away.": "配备转塔式光电观瞄系统的飞机具有出色的光学探测能力，能从更远距离发现目标。",
   "Aircraft without a built-in defensive jammer can take a DJP-10 ECM Pod on an external hardpoint to help defeat radar guided missiles.": "没有内置防御性干扰机的飞机可以在外部挂架携带 DJP-10 电子对抗吊舱，以帮助规避雷达制导导弹。",
-  "Aircraft without a built-in defensive jammer can take an ECM Pod on an external hardpoint to help defeat radar guided missiles.": "没有内置防御干扰机的飞机可以在外部挂点上携带电子对抗吊舱，以帮助规避雷达制导导弹。",
+  "Aircraft without a built-in defensive jammer can take an ECM Pod on an external hardpoint to help defeat radar guided missiles.": "没有内置防御性干扰机的飞机可以在外部挂点上携带电子对抗吊舱，以帮助规避雷达制导导弹。",
   "Aircraft without built-in ECM can take an ECM Pod on an external hardpoint to help defeat radar guided missiles.": "未内置电子对抗的战机，可在外部挂点加装电子对抗吊舱，以对抗雷达制导导弹。",
   "Airfield": "机场",
   "Airport": "机场",
