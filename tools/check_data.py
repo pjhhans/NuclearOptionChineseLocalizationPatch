@@ -18,6 +18,7 @@ scopes/*.json）都会被读进来，先查每个文件自身的格式，再把�
   9. 英文舰名残留（提示级）               —— 舰名统一中文后，值里不该再有「英文词 + 级」
  10. 布局漂移（硬失败）                   —— 词条是否待在它该待的分类文件里
  11. 作用域分类覆盖（提示级）             —— 新出现的作用域会落到 misc.json，提醒补分类
+ 12. 模板门禁（提示级）                   —— 最短模板钉死全体文本付不付一次归一化
 
 用法:
     python tools/check_data.py [数据目录]
@@ -235,6 +236,38 @@ def check_scope_categories(table):
              % (len(unmapped), FALLBACK_CATEGORY, " / ".join(unmapped)))
 
 
+PARAM_MARKER = "{#}"
+
+
+def check_template_gate(table):
+    """模板门禁 = **最短**那条模板键的归一化长度 —— 报出来，别让它被悄悄拖低。
+
+    运行时的第一道闸是 `if (text.Length < _minTemplateKeyLength) return false;`，
+    而它挡在 `Canonicalize` **之前**（LocalizationTable.TryGetTemplate）。所以门禁
+    每低一档，所有长度 ≥ 门禁的文本（缓存命中也不例外）都要多付一次归一化
+    —— 标签正则替换 + 空白折叠 + Trim。
+
+    这条曾被 `~Taxi`（4 字符）钉在 4 上，直到 2026-09-28 把 9 条纯冗余短模板
+    清掉才升到 11。**新增任何短模板都会立刻把全体文本的门槛拖回去**，故在此显式提示。
+    """
+    rows = []
+    for key in table:
+        if kind_of(key) != KIND_TEMPLATE:
+            continue
+        s = TAG_RE.sub("\u0001", key[1:])
+        s = s.replace("\r\n", "\n").replace("\r", "\n").replace("\u000b", "\n")
+        s = re.sub(r"[ \t]+", " ", s).strip()
+        if not s:
+            continue
+        # 参数化模板按最短展开（{#} = 1 位数字）计。
+        rows.append((len(s) - s.count(PARAM_MARKER) * 2, key))
+    if not rows:
+        return
+    gate, pin = min(rows)
+    note("模板门禁 %d，由最短模板 %r 钉死 —— 长度 < %d 的文本可跳过 ④ 段"
+         % (gate, pin, gate))
+
+
 def check_layout(data_dir, table):
     """布局漂移：词条应当待在它该待的分类文件里（规则见 _table_layout.partition）。"""
     try:
@@ -285,6 +318,7 @@ def main():
     check_retired_terms(table)
     check_ship_names(table)
     check_scope_categories(table)
+    check_template_gate(table)
     check_layout(data_dir, table)
 
     for item in notes:
