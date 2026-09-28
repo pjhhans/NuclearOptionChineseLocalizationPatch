@@ -14,7 +14,8 @@
     "receiveCount",
     "sendCount",
     "RenderThread",
-    "NOXContactLabel"
+    "NOXContactLabel",
+    "NOXFriendName"
   ],
   "texts": [
     "lol",
@@ -70,6 +71,9 @@
     "\\ue5c5",
     "\\ue5df",
     "\\ue002",
+    "\\ue875",
+    "\\ue897",
+    "\\ue86a",
     "{Airframe} ?",
     "{CURRENT FUNDS} \\n-{VALUE} \\n\\n{REMAINING FUNDS}",
     "{MissionManager.CurrentMission.Name}",
