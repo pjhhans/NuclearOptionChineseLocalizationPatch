@@ -124,7 +124,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         internal bool Load(string dataDir)
         {
             string mainPath = Path.Combine(dataDir, "translation.json");
-            Dictionary<string, string> main = JsonFile.ReadObject(mainPath);
+            Dictionary<string, string> main = JsonFile.Read<Dictionary<string, string>>(mainPath);
             if (main == null || main.Count == 0)
             {
                 Diagnostics.Log.Error(
@@ -173,7 +173,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         private static Dictionary<string, string> ReadOptional(string path, ref string failure)
         {
             if (!File.Exists(path)) return null;
-            Dictionary<string, string> dict = JsonFile.ReadObject(path);
+            Dictionary<string, string> dict = JsonFile.Read<Dictionary<string, string>>(path);
             if (dict == null && failure == null) failure = Path.GetFileName(path);
             return dict;
         }
@@ -313,7 +313,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             Array.Sort(files, StringComparer.OrdinalIgnoreCase);
             foreach (string file in files)
             {
-                Dictionary<string, string> raw = JsonFile.ReadObject(file);
+                Dictionary<string, string> raw = JsonFile.Read<Dictionary<string, string>>(file);
                 if (raw == null) continue;
 
                 string stem = Path.GetFileNameWithoutExtension(file);
@@ -332,7 +332,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
         private void LoadForceScopes(string path)
         {
-            List<string> list = JsonFile.ReadStringArray(path);
+            List<string> list = JsonFile.Read<List<string>>(path);
             if (list == null) return;
             foreach (string s in list)
             {
@@ -584,34 +584,22 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
         private static class JsonFile
         {
-            internal static Dictionary<string, string> ReadObject(string path)
+            /// <summary>
+            /// 读取并反序列化一个 JSON 文件。文件缺失 / 内容为空 / 解析失败时返回 null（并告警），
+            /// 调用方据此判定「这份数据没载入」。
+            /// </summary>
+            internal static T Read<T>(string path) where T : class
             {
                 try
                 {
                     if (!File.Exists(path)) return null;
                     string json = File.ReadAllText(path);
                     if (string.IsNullOrWhiteSpace(json)) return null;
-                    return Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, string>>(json);
+                    return Newtonsoft.Json.JsonConvert.DeserializeObject<T>(json);
                 }
                 catch (Exception ex)
                 {
                     Diagnostics.Log.Warn("词表文件读取失败 " + Path.GetFileName(path) + "：" + ex.Message);
-                    return null;
-                }
-            }
-
-            internal static List<string> ReadStringArray(string path)
-            {
-                try
-                {
-                    if (!File.Exists(path)) return null;
-                    string json = File.ReadAllText(path);
-                    if (string.IsNullOrWhiteSpace(json)) return null;
-                    return Newtonsoft.Json.JsonConvert.DeserializeObject<List<string>>(json);
-                }
-                catch (Exception ex)
-                {
-                    Diagnostics.Log.Warn("读取失败 " + Path.GetFileName(path) + "：" + ex.Message);
                     return null;
                 }
             }

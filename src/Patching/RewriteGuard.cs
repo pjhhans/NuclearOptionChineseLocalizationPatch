@@ -27,7 +27,15 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             internal int Rewrites;
         }
 
-        private static readonly List<Tracked> Entries = new List<Tracked>(256);
+        /// <summary>
+        /// 跟踪表，按组件实例 ID 索引 —— <see cref="Track"/> 在每次成功翻译时调用（高频），
+        /// 用字典查找替代旧版的线性扫描，命中即 O(1)。
+        /// </summary>
+        private static readonly Dictionary<int, Tracked> Entries = new Dictionary<int, Tracked>(256);
+
+        /// <summary>插入顺序（淘汰最旧条目用；<see cref="Dictionary{TKey,TValue}"/> 本身不保证顺序）。</summary>
+        private static readonly Queue<int> EntryOrder = new Queue<int>();
+
         private static readonly HashSet<int> GivenUp = new HashSet<int>();
 
         /// <summary>跟踪条目上限。超出后淘汰最旧的，避免长时间游玩导致内存持续增长。</summary>
@@ -46,6 +54,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         internal static void Clear()
         {
             Entries.Clear();
+            EntryOrder.Clear();
             GivenUp.Clear();
         }
 
@@ -58,25 +67,33 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             int id = comp.GetInstanceID();
             if (GivenUp.Contains(id)) return;
 
-            for (int i = 0; i < Entries.Count; i++)
+            // 同一组件（ID 相同且仍是同一个对象）→ 原地更新内容即可。
+            // 比对对象本身而不只看 ID：实例 ID 在对象销毁后可能被复用。
+            if (Entries.TryGetValue(id, out Tracked existing) && existing.Component == comp)
             {
-                // Unity 的 == 重载会把已销毁对象判为 null，这里正好当作"还活着"的依据
-                if (Entries[i].Component == comp)
-                {
-                    Entries[i].Original = original;
-                    Entries[i].Translation = translation;
-                    return;
-                }
+                existing.Original = original;
+                existing.Translation = translation;
+                return;
             }
 
-            if (Entries.Count >= MaxEntries) Entries.RemoveAt(0);
-            Entries.Add(new Tracked
+            if (Entries.Count >= MaxEntries) EvictOldest();
+            Entries[id] = new Tracked
             {
                 Component = comp,
                 Original = original,
                 Translation = translation,
                 WindowStart = Time.realtimeSinceStartup,
-            });
+            };
+            EntryOrder.Enqueue(id);
+        }
+
+        /// <summary>淘汰最旧的一条（按插入顺序，跳过已被移除或已换对象的键）。</summary>
+        private static void EvictOldest()
+        {
+            while (EntryOrder.Count > 0)
+            {
+                if (Entries.Remove(EntryOrder.Dequeue())) return;
+            }
         }
 
         /// <summary>每帧调用一次。</summary>
@@ -85,20 +102,23 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             if (Disabled || Entries.Count == 0) return;
             float now = Time.realtimeSinceStartup;
 
-            for (int i = Entries.Count - 1; i >= 0; i--)
+            // 遍历中不能改字典，先收集待移除的键，循环结束后统一删。
+            List<int> dead = null;
+
+            foreach (KeyValuePair<int, Tracked> kv in Entries)
             {
-                Tracked entry = Entries[i];
+                Tracked entry = kv.Value;
 
                 if (entry.Component == null)          // 组件已销毁
                 {
-                    Entries.RemoveAt(i);
+                    (dead ??= new List<int>()).Add(kv.Key);
                     continue;
                 }
 
                 string current = PatchHelpers.Read(entry.Component);
                 if (current == null)
                 {
-                    Entries.RemoveAt(i);
+                    (dead ??= new List<int>()).Add(kv.Key);
                     continue;
                 }
 
@@ -118,12 +138,16 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     Diagnostics.Log.Debug(
                         "放弃补译（回写过频）：" + PatchHelpers.ScopeOf(entry.Component));
                     GivenUp.Add(entry.Component.GetInstanceID());
-                    Entries.RemoveAt(i);
+                    (dead ??= new List<int>()).Add(kv.Key);
                     continue;
                 }
 
                 PatchHelpers.Write(entry.Component, entry.Translation);
             }
+
+            if (dead != null)
+                for (int i = 0; i < dead.Count; i++)
+                    Entries.Remove(dead[i]);
         }
     }
 }

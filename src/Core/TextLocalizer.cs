@@ -79,11 +79,36 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             _recentHits.Enqueue(new[] { Clip(original), Clip(translated) });
         }
 
+        /// <summary>
+        /// 压平成单行摘要：换行/回车/垂直制表转空格、连续空格折叠成一个，超长截断。
+        /// 单趟 <see cref="System.Text.StringBuilder"/> 扫描 —— 旧版用
+        /// <c>while (Contains("  ")) Replace(...)</c>，每轮重扫全文，长文本上是 O(n²)。
+        /// </summary>
         private static string Clip(string s)
         {
             if (string.IsNullOrEmpty(s)) return string.Empty;
-            string flat = s.Replace('\n', ' ').Replace('\r', ' ').Replace('\u000B', ' ');
-            while (flat.Contains("  ")) flat = flat.Replace("  ", " ");
+
+            var sb = new System.Text.StringBuilder(s.Length);
+            bool prevSpace = false;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                // 只把这三种换行符与空格当空白（制表符保持原样，与旧行为一致）
+                bool isSpace = c == ' ' || c == '\n' || c == '\r' || c == '\u000B';
+                if (isSpace)
+                {
+                    if (prevSpace) continue; // 连续空白折叠成一个
+                    sb.Append(' ');
+                    prevSpace = true;
+                }
+                else
+                {
+                    sb.Append(c);
+                    prevSpace = false;
+                }
+            }
+
+            string flat = sb.ToString();
             return flat.Length <= 42 ? flat.Trim() : flat.Substring(0, 42).Trim() + "…";
         }
 
@@ -113,6 +138,9 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// <para>本方法是<b>薄壳</b>，只负责「最近命中」记录；真正的判定在
         /// <see cref="LocalizeInner"/>。递归调用走的也是本方法，所以用
         /// <c>_depth</c> 保证只有最外层的那次被记录。</para>
+        ///
+        /// <para><b>递归调用不做重复的排除名单判定</b>：片段/模板拆开后每一小段都直接走本方法，
+        /// 若每段都重跑一遍排除规则，既慢、又可能把「拼起来才成句」的片段误排除。</para>
         /// </summary>
         internal string Localize(string text, string scope)
         {
@@ -311,7 +339,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 string head = m.Groups[1].Value.Trim();
                 string turret = m.Groups[2].Value;
                 string control = m.Groups[3].Value;
-                return (head.Length == 0 ? string.Empty : LocalizePart(head, scope) + " ")
+                return (head.Length == 0 ? string.Empty : Localize(head, scope) + " ")
                        + LocalizeToken(turret, scope) + " " + LocalizeToken(control, scope);
             }
 
@@ -319,29 +347,29 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             if (m.Success)
             {
                 return LocalizeToken(m.Groups[1].Value, scope) + " "
-                       + LocalizePart(m.Groups[2].Value, scope) + m.Groups[3].Value;
+                       + Localize(m.Groups[2].Value, scope) + m.Groups[3].Value;
             }
 
             m = TokenPatterns.BuySentence.Match(text);
             if (m.Success)
             {
                 return LocalizeToken(m.Groups[1].Value, scope) + " "
-                       + LocalizePart(m.Groups[2].Value, scope);
+                       + Localize(m.Groups[2].Value, scope);
             }
 
             m = TokenPatterns.SetToSentence.Match(text);
             if (m.Success)
             {
-                return LocalizePart(m.Groups[1].Value, scope) + " "
+                return Localize(m.Groups[1].Value, scope) + " "
                        + LocalizeToken(m.Groups[2].Value, scope) + " "
-                       + LocalizePart(m.Groups[3].Value, scope);
+                       + Localize(m.Groups[3].Value, scope);
             }
 
             m = TokenPatterns.TaxiToSentence.Match(text);
             if (m.Success)
             {
                 return LocalizeToken(m.Groups[1].Value, scope) + " "
-                       + LocalizePart(m.Groups[2].Value, scope);
+                       + Localize(m.Groups[2].Value, scope);
             }
 
             return null;
@@ -365,7 +393,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (string.CompareOrdinal(text, 0, f.Key, 0, f.Key.Length) != 0) continue;
                 // TrimStart：游戏拼串常带多余空格（"Rearmed " + " 100% complete"），
                 // 直接拼进译文会留下难看的空隙。
-                return f.Value + LocalizePart(text.Substring(f.Key.Length).TrimStart(), scope);
+                return f.Value + Localize(text.Substring(f.Key.Length).TrimStart(), scope);
             }
 
             foreach (LocalizationTable.Fragment f in _table.SuffixFragments)
@@ -373,7 +401,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (text.Length < f.Key.Length) continue;
                 int at = text.Length - f.Key.Length;
                 if (string.CompareOrdinal(text, at, f.Key, 0, f.Key.Length) != 0) continue;
-                return LocalizePart(text.Substring(0, at).TrimEnd(), scope) + f.Value;
+                return Localize(text.Substring(0, at).TrimEnd(), scope) + f.Value;
             }
 
             foreach (LocalizationTable.Fragment f in _table.InfixFragments)
@@ -381,9 +409,9 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (text.Length < f.Key.Length) continue;
                 int at = text.IndexOf(f.Key, StringComparison.Ordinal);
                 if (at < 0) continue;
-                return LocalizePart(text.Substring(0, at), scope)
+                return Localize(text.Substring(0, at), scope)
                        + f.Value
-                       + LocalizePart(text.Substring(at + f.Key.Length), scope);
+                       + Localize(text.Substring(at + f.Key.Length), scope);
             }
 
             return null;
@@ -418,7 +446,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                         && !IsNoise(innerTrim)
                         && !_exclusions.IsKeptTerm(innerTrim))
                     {
-                        string innerTranslated = LocalizePart(innerTrim, scope);
+                        string innerTranslated = Localize(innerTrim, scope);
                         if (innerTranslated != innerTrim)
                         {
                             parts[i] = part.Replace(innerTrim, innerTranslated);
@@ -604,7 +632,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (words <= 4)
                 {
                     handled = true;
-                    string trans = LocalizePart(prefix, scope);
+                    string trans = Localize(prefix, scope);
                     // 重新拼合，保留 "+" 与数值的原样
                     return trans + text.Substring(epn.Groups[1].Length);
                 }
@@ -652,7 +680,6 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         }
 
         /// <summary>递归翻译一段文本（不再做排除名单判定，因为调用方已判过）。</summary>
-        private string LocalizePart(string text, string scope) => Localize(text, scope);
 
         /// <summary>用词表的反向索引反查原文。只覆盖普通词条；模板 / 片段拼接的结果不在词表里。</summary>
         internal bool TryReverseLookup(string chinese, out string original)

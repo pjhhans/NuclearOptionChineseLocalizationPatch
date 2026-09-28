@@ -121,39 +121,20 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// </summary>
         /// <returns>是否真的改写了文本。兜底扫描靠它统计「本轮翻到东西没有」，
         /// 作为空闲退避的信号 —— 什么都不改的扫描才允许拉长间隔。</returns>
-        internal static bool LocalizeInPlace(TMP_Text text)
+        internal static bool LocalizeInPlace(Component comp)
         {
-            if (text == null || _tmpField == null) return false;
+            if (!IsSupported(comp)) return false;
             try
             {
-                string current = _tmpField(text);
+                string current = Read(comp);
                 if (string.IsNullOrEmpty(current)) return false;
 
                 string translated;
-                if (!TryLocalize(current, text, out translated)) return false;
+                if (!TryLocalize(current, comp, out translated)) return false;
 
                 // 直接写字段，避开 setter —— 否则会触发我们自己的 set_text 钩子，
                 // 虽然幂等短路能兜住，但白白多走一遍完整流水线。
-                _tmpField(text) = translated;
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Diagnostics.Log.Debug("原地翻译失败：" + ex.Message);
-                return false;
-            }
-        }
-
-        internal static bool LocalizeInPlace(Text text)
-        {
-            if (text == null || _legacyField == null) return false;
-            try
-            {
-                string current = _legacyField(text);
-                if (string.IsNullOrEmpty(current)) return false;
-                string translated;
-                if (!TryLocalize(current, text, out translated)) return false;
-                _legacyField(text) = translated;
+                Write(comp, translated);
                 return true;
             }
             catch (Exception ex)
@@ -199,31 +180,15 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// <para>这里<b>刻意不</b>套用 <see cref="TryLocalize"/> 的「只写含中文的结果」收敛性限制 ——
         /// 该限制的目的是防止英文↔英文来回改写，而这里的目标恰恰是写回英文。</para>
         /// </summary>
-        internal static void RevertInPlace(TMP_Text text)
+        internal static void RevertInPlace(Component comp)
         {
-            if (text == null || _tmpField == null) return;
+            if (!IsSupported(comp)) return;
             try
             {
-                string current = _tmpField(text);
+                string current = Read(comp);
                 string original;
                 if (!TryLookupOriginal(current, out original)) return;
-                _tmpField(text) = original;
-            }
-            catch (Exception ex)
-            {
-                Diagnostics.Log.Debug("还原失败：" + ex.Message);
-            }
-        }
-
-        internal static void RevertInPlace(Text text)
-        {
-            if (text == null || _legacyField == null) return;
-            try
-            {
-                string current = _legacyField(text);
-                string original;
-                if (!TryLookupOriginal(current, out original)) return;
-                _legacyField(text) = original;
+                Write(comp, original);
             }
             catch (Exception ex)
             {
