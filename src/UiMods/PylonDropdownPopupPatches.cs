@@ -8,7 +8,7 @@ using UnityEngine.UI;
 namespace NuclearOptionChineseLocalizationPatch.UiMods
 {
     /// <summary>
-    /// 挂架下拉弹出列表的加宽（治本版）：在 <see cref="TMP_Dropdown.Show"/> 之后对
+    /// 挂架下拉弹出列表的加宽：在 <see cref="TMP_Dropdown.Show"/> 之后对
     /// <strong>实际弹出的列表</strong>动手 —— 这才是中文武器名被截断的修复点。
     ///
     /// <para><b>为什么必须在 Show 之后、且用独立补丁类：</b></para>
