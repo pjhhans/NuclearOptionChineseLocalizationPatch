@@ -27,8 +27,6 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
         internal static TMP_FontAsset Font { get; private set; }
 
-        internal static bool IsLoaded => Font != null;
-
         internal static void Load()
         {
             if (Font != null) return;

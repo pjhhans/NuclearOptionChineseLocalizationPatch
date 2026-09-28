@@ -281,22 +281,6 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             }
         }
 
-        /// <summary>横向拉伸锚的节点随父变宽，跳过；固定宽的节点补上增量。</summary>
-        private static void StretchChild(RectTransform rt, float delta)
-        {
-            if (rt == null) return;
-            if (rt.anchorMax.x - rt.anchorMin.x > 0.5f) return; // 拉伸锚，继承父宽
-            rt.sizeDelta += new Vector2(delta, 0f);
-        }
-
-        /// <summary>组件名探测 Canvas（csproj 未引 UnityEngine.UIModule，不能用类型）。</summary>
-        private static bool HasCanvasComponent(Transform t)
-        {
-            foreach (Component comp in t.GetComponents<Component>())
-                if (comp != null && comp.GetType().Name == "Canvas") return true;
-            return false;
-        }
-
         /// <summary>
         /// 禁掉链上节点自身/子级的横向宽度控制（LayoutGroup 的 childControlWidth、
         /// ContentSizeFitter 的横向 fit），否则布局系统会在下一帧把强制宽度改回去。

@@ -38,7 +38,6 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
         internal static string TableFile => Path.Combine(BaseDir, "translation.json");
         internal static string ExclusionsFile => Path.Combine(BaseDir, "exclusions.json");
-        internal static string ScopesDir => Path.Combine(BaseDir, "scopes");
         internal static string FontFile => Path.Combine(BaseDir, "font.ttf");
 
         /// <summary>数据目录是否就绪。缺文件时给出可操作的提示，而不是抛异常。</summary>

@@ -37,14 +37,6 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         internal int TextCount => _texts.Count;
         internal int TermCount => _terms.Count;
 
-        internal static ExclusionRules FromJson(string scopesJson)
-        {
-            var rules = new ExclusionRules();
-            if (string.IsNullOrWhiteSpace(scopesJson)) return rules;
-            rules.Load(scopesJson);
-            return rules;
-        }
-
         /// <summary>从文件重新载入。可重复调用（热重载用），会先清空现有名单。</summary>
         internal void LoadFile(string path)
         {
