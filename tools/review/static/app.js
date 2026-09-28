@@ -725,7 +725,7 @@ function closeModal() { $('#modal').classList.remove('show'); }
 function renderHelp() {
   $('#helpBox').innerHTML = `
     <h3>这个工具做什么</h3>
-    <p>把 <code>data/</code> 下的<b>整套分类词表</b>（约 4850 条）摊成可检索、可筛选、可编辑的
+    <p>把 <code>data/</code> 下的<b>整套分类词表</b>（5000 多条）摊成可检索、可筛选、可编辑的
     界面，并把它按风险标出来，让校对不必从头读一遍全表。它<b>只在本机运行</b>（127.0.0.1），
     只读打开、写盘必须显式点保存。</p>
 

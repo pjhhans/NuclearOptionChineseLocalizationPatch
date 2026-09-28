@@ -84,6 +84,11 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 
 **生成词表的脚本必须与 `Canonicalize` 逐字符一致。**
 
+> **空白折叠有快路径**（性能关键）：文本既不含 `\t`、也没有连续空格时，「折叠 + Trim」与
+> 「直接 Trim」等价，于是 `Canonicalize` 直接返回、不构造正则替换出的新串。这是热路径上
+> 最贵的一步，而整份词表里只有 6 条（0.12%）真的需要跑折叠正则。
+> **改这段之前先读 `TextCanonicalizer` 上的注释**，等价性判据有配套的语料 diff 测试。
+
 #### 为什么模板还需要「指纹回落」
 
 教程弹窗正文里的 `<bind=X>` **由游戏在写入控件之前**就解析成三态：字形（`<sprite name="G">`）、
@@ -115,16 +120,26 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 
 ```jsonc
 {
-  "scopes": ["countermeasureName", ...],  // 这些作用域整体不翻译
-  "terms":  ["RCS", "NEZ", ...],          // 保持英文的术语
-  "texts":  ["SPD 673", ...]              // 精确排除的整条文本
+  "useDefaults":    true,                  // 是否启用代码内置的默认排除
+  "scopes":  ["countermeasureName", ...],  // 这些作用域整体不翻译
+  "terms":   ["RCS", "NEZ", ...],          // 保持英文的术语
+  "texts":   ["SPD 673", ...],             // 精确排除的整条文本
+  "restoreScopes": [],                     // 「抢救」：从最终名单里撤掉这些内置默认项
+  "restoreTerms":  [],
+  "longGuard":      true,                  // 译文宽度超原文 longGuardRatio 倍时保持原文
+  "longGuardRatio": 3.0
 }
 ```
 
 - `terms` 的放过条件是**严格**的：仅当文本就是该术语、或「术语 + 尾标点」、
   或「术语 + 分隔符 + 其余部分不含字母或含数字」时才整体放过。
   因此加了 `FS-3` 不会屏蔽 `FS-3 Ternion`（后者照常翻译）。
-- `texts` 额外放过「以某项 + 空格开头」的读数（`SPD 673` 会连 `SPD 673 km/h` 一起放过）。
+- `texts` 额外放过「以某项 + 空格开头」的读数（`SPD 673` 会连 `SPD 673 km/h` 一起放过）；
+  但仅当空格之后**确实是读数**（数字 + 至多 4 字符短单位），后面跟词句的整句不会被吞掉。
+- `longGuard` 只对**单词 / 双词的短标签**生效，防的是固定宽度槽位被撑破（见 §4.1 的 C 级）。
+- 运行期自动放弃翻译的对象名会由插件追加进 `scopes`，所以该字段在线上会随游玩增长，属预期。
+- ⚠️ **本文件随仓库公开分发**：玩家昵称、账号 ID、创意工坊作者名等个人信息**一律不得写入**；
+  运行期采集到的此类字符串须在提交前剔除。
 
 ### 2.4 作用域分表 `data/scopes/*.json`
 
@@ -155,7 +170,8 @@ src/
 │   ├─ Log.cs                   日志封装
 │   ├─ MissLog.cs               漏译记录（默认不落盘；内存环形缓冲始终可用）
 │   ├─ HarmonySelfTest.cs       自打补丁验证 Harmony 是否真生效
-│   └─ RuntimeStatus.cs         运行期状态快照（供 F11 窗口显示）
+│   ├─ RuntimeStatus.cs         运行期状态快照（供 F11 窗口显示）
+│   └─ PerfProbe.cs             性能探针：热路径分段计时 + GC/分配（默认关、不落盘）
 ├─ Patching/
 │   ├─ TmpPatches.cs            TMP_Text 系列补丁
 │   ├─ LegacyUiPatches.cs       UnityEngine.UI.Text 补丁
@@ -253,6 +269,9 @@ BepInEx 在「首个真实场景就绪**之前**」就加载插件（时序来�
 ## 4. 翻译流水线
 
 `TextLocalizer.Localize(text, scope)` 按下列顺序判定，**每一步都可能直接返回**：
+
+> 每一步的成本构成与实机实测（翻译全流程占单核不足 3%、采样窗口内 GC 为零）见
+> [`RISKS.md` 的「性能影响」](RISKS.md#性能影响完整论证)。
 
 ```
 0. 空串                    → 原样返回
@@ -381,4 +400,4 @@ dotnet build -c Release -t:DeployData   # 再同步数据
 
 ## 7. 授权
 
-见 `README.md` 的「授权与来源」一节。
+见 [`README.md` 的「授权」一节](../README.md#授权)。
