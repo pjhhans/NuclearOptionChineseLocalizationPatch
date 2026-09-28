@@ -99,43 +99,52 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// </summary>
         internal bool IsExcluded(string text, string scope)
         {
-            if (string.IsNullOrEmpty(text)) return false;
-            if (IsScopeExcluded(scope)) return true;
-
-            if (_texts.Count == 0) return false;
-
-            // 与名单同一套清洗（见 AddAll 的说明）：游戏会给输入框里的名字追加
-            // \u200B（`airbase 1\u200B`、`玩家名\u200B`），不洗掉的话名单永远匹配不上。
-            text = KeyScrubber.Scrub(text);
-            string trimmed = text.Trim();
-            if (_texts.Contains(text)) return true;
-            if (trimmed != text && _texts.Contains(trimmed)) return true;
-
-            // 「某项 + 空格开头」的读数一并排除：登记了 SPD 673，
-            // 那么 SPD 673 km/h 也应当跟着排除，否则同一读数会一半中文一半英文。
-            //
-            // ★ 必须确认空格之后确实是**读数**，不能只要求「前缀 + 一个空格」。
-            //   旧判据漏掉了后半句，于是名单里的**单字母条目**（`A` / `AA` / `HI` / `LO`
-            //   —— 都是任务编辑器里的默认名，本身还带零宽空格）把一切以「A 」开头的
-            //   **整句**都判进了不翻译名单。受害实例（词表里明明有译文）：
-            //     A Piledriver may cross the Karman line at the top of its ballistic flight.
-            //     A Shard Class Corvette can supply munitions to aircraft landing on its deck.
-            //     A 155mm slug fired from the Dynamo Class' railgun …
-            //   它们的表现是最难查的一类：**既不出中文，也不进漏译清单**——
-            //   因为走的是"刻意排除"，日志与清单里都看不出任何异常。
-            //   现在只认「数字（可带符号）+ 最多 4 字符的短单位」，`A 155mm slug …`
-            //   这种后面跟词句的整句会正常进入翻译流程。
-            foreach (string candidate in _texts)
+            // 「名单」段（性能探针，默认关）。多条提前返回路径统一由 finally 收口。
+            long probe = Diagnostics.PerfProbe.Begin();
+            try
             {
-                if (trimmed.Length <= candidate.Length + 1) continue;
-                if (trimmed[candidate.Length] != ' ') continue;
-                if (string.Compare(trimmed, 0, candidate, 0, candidate.Length,
-                                   StringComparison.OrdinalIgnoreCase) != 0) continue;
+                if (string.IsNullOrEmpty(text)) return false;
+                if (IsScopeExcluded(scope)) return true;
 
-                string rest = trimmed.Substring(candidate.Length + 1).TrimStart();
-                if (rest.Length > 0 && TokenPatterns.ReadoutTail.IsMatch(rest)) return true;
+                if (_texts.Count == 0) return false;
+
+                // 与名单同一套清洗（见 AddAll 的说明）：游戏会给输入框里的名字追加
+                // \u200B（`airbase 1\u200B`、`玩家名\u200B`），不洗掉的话名单永远匹配不上。
+                text = KeyScrubber.Scrub(text);
+                string trimmed = text.Trim();
+                if (_texts.Contains(text)) return true;
+                if (trimmed != text && _texts.Contains(trimmed)) return true;
+
+                // 「某项 + 空格开头」的读数一并排除：登记了 SPD 673，
+                // 那么 SPD 673 km/h 也应当跟着排除，否则同一读数会一半中文一半英文。
+                //
+                // ★ 必须确认空格之后确实是**读数**，不能只要求「前缀 + 一个空格」。
+                //   旧判据漏掉了后半句，于是名单里的**单字母条目**（`A` / `AA` / `HI` / `LO`
+                //   —— 都是任务编辑器里的默认名，本身还带零宽空格）把一切以「A 」开头的
+                //   **整句**都判进了不翻译名单。受害实例（词表里明明有译文）：
+                //     A Piledriver may cross the Karman line at the top of its ballistic flight.
+                //     A Shard Class Corvette can supply munitions to aircraft landing on its deck.
+                //     A 155mm slug fired from the Dynamo Class' railgun …
+                //   它们的表现是最难查的一类：**既不出中文，也不进漏译清单**——
+                //   因为走的是"刻意排除"，日志与清单里都看不出任何异常。
+                //   现在只认「数字（可带符号）+ 最多 4 字符的短单位」，`A 155mm slug …`
+                //   这种后面跟词句的整句会正常进入翻译流程。
+                foreach (string candidate in _texts)
+                {
+                    if (trimmed.Length <= candidate.Length + 1) continue;
+                    if (trimmed[candidate.Length] != ' ') continue;
+                    if (string.Compare(trimmed, 0, candidate, 0, candidate.Length,
+                                       StringComparison.OrdinalIgnoreCase) != 0) continue;
+
+                    string rest = trimmed.Substring(candidate.Length + 1).TrimStart();
+                    if (rest.Length > 0 && TokenPatterns.ReadoutTail.IsMatch(rest)) return true;
+                }
+                return false;
             }
-            return false;
+            finally
+            {
+                Diagnostics.PerfProbe.End(Diagnostics.PerfProbe.Seg.NameList, probe);
+            }
         }
 
         /// <summary>
@@ -151,57 +160,66 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// </summary>
         internal bool IsKeptTerm(string text)
         {
-            if (string.IsNullOrEmpty(text) || _terms.Count == 0) return false;
-
-            string t = StripScopePrefix(text);
-            t = TokenPatterns.Tag.Replace(t, string.Empty).Trim();
-            if (t.Length == 0) return false;
-
-            if (_terms.Contains(t)) return true;
-
-            // 形态 2：去掉尾随标点后仍是术语
-            int end = t.Length;
-            while (end > 0 && TrailingPunctuation.IndexOf(t[end - 1]) >= 0) end--;
-            if (end != t.Length && end > 0)
+            // 「名单」段（性能探针，默认关）。
+            long probe = Diagnostics.PerfProbe.Begin();
+            try
             {
-                string head = t.Substring(0, end).TrimEnd();
-                if (head.Length > 0 && _terms.Contains(head)) return true;
-            }
+                if (string.IsNullOrEmpty(text) || _terms.Count == 0) return false;
 
-            // 形态 3：术语 + 分隔符 + 读数
-            //
-            // ★ 判据必须收窄。旧写法是「rest 里**任意位置**出现数字就算读数」，
-            //   于是术语后面跟一整句话时也会被整条判成"保持英文"。真实受害例子
-            //   （都已写进 check_report_pipeline.py 的用例）：
-            //     `VT-7 Vagrant +1.9`  —— 术语 VT-7 + 空格 + 后面带数字的一段话（击杀得分行）
-            //     `… Airport / Ab12`   —— 术语 VT-7 + 空格 + 后面的格子坐标（部署播报）
-            //   两条都是**整条不翻译**：结果里没有中文，也不进漏译清单，从界面到日志都看不出异常。
-            //   现在只认真正的读数形状：纯数字/纯符号，或「数字 + 紧跟其后的短单位」
-            //   （5.2、+1.9、40 km、12kJ）。
-            foreach (string term in _terms)
-            {
-                int len = term.Length;
-                if (t.Length <= len) continue;
-                if (string.Compare(t, 0, term, 0, len,
-                                   StringComparison.OrdinalIgnoreCase) != 0) continue;
+                string t = StripScopePrefix(text);
+                t = TokenPatterns.Tag.Replace(t, string.Empty).Trim();
+                if (t.Length == 0) return false;
 
-                char sep = t[len];
-                if (sep != ' ' && sep != ':' && sep != '=') continue;
+                if (_terms.Contains(t)) return true;
 
-                string rest = t.Substring(len).Trim(' ', ':', '=');
-                if (rest.Length == 0) return true;
-
-                bool hasDigit = false, hasLetter = false;
-                foreach (char c in rest)
+                // 形态 2：去掉尾随标点后仍是术语
+                int end = t.Length;
+                while (end > 0 && TrailingPunctuation.IndexOf(t[end - 1]) >= 0) end--;
+                if (end != t.Length && end > 0)
                 {
-                    if (c >= '0' && c <= '9') hasDigit = true;
-                    else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) hasLetter = true;
+                    string head = t.Substring(0, end).TrimEnd();
+                    if (head.Length > 0 && _terms.Contains(head)) return true;
                 }
-                if (!hasLetter) return true;                             // 纯数字 / 纯符号
-                if (hasDigit && TokenPatterns.ReadoutTail.IsMatch(rest)) return true;   // 数字 + 短单位
-                // 其余是「术语后面跟词句」，属正文，继续走后续翻译流程
+
+                // 形态 3：术语 + 分隔符 + 读数
+                //
+                // ★ 判据必须收窄。旧写法是「rest 里**任意位置**出现数字就算读数」，
+                //   于是术语后面跟一整句话时也会被整条判成"保持英文"。真实受害例子
+                //   （都已写进 check_report_pipeline.py 的用例）：
+                //     `VT-7 Vagrant +1.9`  —— 术语 VT-7 + 空格 + 后面带数字的一段话（击杀得分行）
+                //     `… Airport / Ab12`   —— 术语 VT-7 + 空格 + 后面的格子坐标（部署播报）
+                //   两条都是**整条不翻译**：结果里没有中文，也不进漏译清单，从界面到日志都看不出异常。
+                //   现在只认真正的读数形状：纯数字/纯符号，或「数字 + 紧跟其后的短单位」
+                //   （5.2、+1.9、40 km、12kJ）。
+                foreach (string term in _terms)
+                {
+                    int len = term.Length;
+                    if (t.Length <= len) continue;
+                    if (string.Compare(t, 0, term, 0, len,
+                                       StringComparison.OrdinalIgnoreCase) != 0) continue;
+
+                    char sep = t[len];
+                    if (sep != ' ' && sep != ':' && sep != '=') continue;
+
+                    string rest = t.Substring(len).Trim(' ', ':', '=');
+                    if (rest.Length == 0) return true;
+
+                    bool hasDigit = false, hasLetter = false;
+                    foreach (char c in rest)
+                    {
+                        if (c >= '0' && c <= '9') hasDigit = true;
+                        else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) hasLetter = true;
+                    }
+                    if (!hasLetter) return true;                             // 纯数字 / 纯符号
+                    if (hasDigit && TokenPatterns.ReadoutTail.IsMatch(rest)) return true;   // 数字 + 短单位
+                    // 其余是「术语后面跟词句」，属正文，继续走后续翻译流程
+                }
+                return false;
             }
-            return false;
+            finally
+            {
+                Diagnostics.PerfProbe.End(Diagnostics.PerfProbe.Seg.NameList, probe);
+            }
         }
 
         /// <summary>剥掉形如 <c>[Scope]</c> 的前缀。作用域名长度设为 1–40，避免把正文里的方括号误当作用域。</summary>

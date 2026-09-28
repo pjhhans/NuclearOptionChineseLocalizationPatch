@@ -117,6 +117,8 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
         private void Update()
         {
             RuntimeStatus.HostAlive = true;
+            // 性能探针的时间基准（默认关；关闭时本调用立即返回，只剩一次静态布尔判断）。
+            PerfProbe.FrameTick(Time.realtimeSinceStartup);
             HandleHotkeys();
             HandleScan();
             LocalizationPlugin.MissLog?.FlushIfDue();

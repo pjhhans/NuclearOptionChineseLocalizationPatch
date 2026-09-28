@@ -102,7 +102,11 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             var localizer = LocalizationPlugin.Localizer;
             if (localizer == null) return false;
 
+            // 「作用域推断」段（性能探针，默认关）：每次潜在翻译一次，含原生 name 编组。
+            long probeScope = Diagnostics.PerfProbe.Begin();
             string scope = ScopeOf(comp);
+            Diagnostics.PerfProbe.End(Diagnostics.PerfProbe.Seg.ScopeOf, probeScope);
+
             string result = localizer.Localize(original, scope);
             if (result == original || !Core.TextLocalizer.HasChinese(result)) return false;
 

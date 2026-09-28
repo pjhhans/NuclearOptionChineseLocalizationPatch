@@ -141,10 +141,14 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         ///
         /// <para><b>递归调用不做重复的排除名单判定</b>：片段/模板拆开后每一小段都直接走本方法，
         /// 若每段都重跑一遍排除规则，既慢、又可能把「拼起来才成句」的片段误排除。</para>
+        ///
+        /// <para><b>性能探针</b>（<see cref="PerfProbe"/>，默认关）：只对<b>最外层</b>那次调用计时，
+        /// 得到「一次赋值的固定成本」。关掉探针时 <c>Begin</c> 返回 0，下面整段退化为一次判断。</para>
         /// </summary>
         internal string Localize(string text, string scope)
         {
             _depth++;
+            long probeTotal = PerfProbe.Begin();
             try
             {
                 string result = LocalizeInner(text, scope);
@@ -156,6 +160,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             }
             finally
             {
+                if (_depth == 1) PerfProbe.End(PerfProbe.Seg.Total, probeTotal);
                 _depth--;
             }
         }
@@ -206,8 +211,15 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 }
             }
 
+            // 「核心 + 缓存」段：缓存命中时只量一次字典查表，未命中时把主体流水线整段计入。
+            long probeCore = PerfProbe.Begin();
+
             string cached;
-            if (_cache.TryGetValue(text, out cached)) return cached;
+            if (_cache.TryGetValue(text, out cached))
+            {
+                PerfProbe.End(PerfProbe.Seg.Core, probeCore);
+                return cached;
+            }
 
             string result = LocalizeCore(text, scope);
 
@@ -216,6 +228,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (_cache.Count >= _cacheLimit) _cache.Clear();
                 _cache[text] = result;
             }
+            PerfProbe.End(PerfProbe.Seg.Core, probeCore);
             return result;
         }
 

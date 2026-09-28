@@ -267,6 +267,23 @@ namespace NuclearOptionChineseLocalizationPatch.Ui
 
             bool verbose = GUILayout.Toggle(Log.Verbose, " 输出调试级日志（写盘频繁，仅排障时开）");
             Log.Verbose = verbose;
+
+            // ---- 性能探针（默认关）----
+            // 开启期间热路径每次赋值多一次计时，仅供取样；量完就关。
+            // ★ 控件数量必须恒定：两个 Label 与一个按钮**始终存在**，只让文本随状态变。
+            //   若按 Enabled 决定要不要画，Layout / Repaint 两趟的条数就会不一致，
+            //   Unity 抛 "GUILayout: Mismatched LayoutGroup"，窗口当场画坏（见快照区说明）。
+            bool probe = GUILayout.Toggle(PerfProbe.Enabled, " 性能探针（默认关；开启后有额外计时开销，仅供取样）");
+            if (probe != PerfProbe.Enabled) PerfProbe.SetEnabled(probe);
+
+            GUILayout.Label(PerfProbe.Enabled ? PerfProbe.SummaryLine() : "　（未开启 —— 勾选后约 1 秒出数）");
+            GUILayout.Label(PerfProbe.Enabled ? PerfProbe.SegmentLine() : string.Empty);
+            GUILayout.Label(PerfProbe.Enabled ? PerfProbe.PeakLine() : string.Empty);
+            if (GUILayout.Button("清零探针统计", GUILayout.Height(22f)))
+            {
+                PerfProbe.Reset();
+                Log.Info("性能探针统计已清零。");
+            }
         }
 
         // ------------------------------------------------------------------ 诊断

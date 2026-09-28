@@ -358,28 +358,38 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// </summary>
         internal string LookupScoped(string scope, string text)
         {
-            if (string.IsNullOrEmpty(scope) || string.IsNullOrEmpty(text)) return null;
-
-            Dictionary<string, string> dict;
-            if (_scoped.TryGetValue(scope, out dict))
+            // 「作用域查询」段（性能探针，默认关）。这是本文件被调用最频繁的方法之一，
+            // 单次成本很低，所以判读时以探针给出的**次数**为主、毫秒数为辅。
+            long probe = Diagnostics.PerfProbe.Begin();
+            try
             {
-                string hit;
-                if (dict.TryGetValue(text, out hit)) return hit;
+                if (string.IsNullOrEmpty(scope) || string.IsNullOrEmpty(text)) return null;
 
-                string cleaned = KeyScrubber.Scrub(text).Trim();
-                if (cleaned.Length > 0 && dict.TryGetValue(cleaned, out hit)) return hit;
+                Dictionary<string, string> dict;
+                if (_scoped.TryGetValue(scope, out dict))
+                {
+                    string hit;
+                    if (dict.TryGetValue(text, out hit)) return hit;
+
+                    string cleaned = KeyScrubber.Scrub(text).Trim();
+                    if (cleaned.Length > 0 && dict.TryGetValue(cleaned, out hit)) return hit;
+                }
+
+                string scopedKey = "[" + scope + "]" + text;
+                string value;
+                if (_global.TryGetValue(scopedKey, out value)) return value;
+
+                string clean = KeyScrubber.Scrub(text).Trim();
+                if (clean.Length > 0 && _global.TryGetValue("[" + scope + "]" + clean, out value))
+                {
+                    return value;
+                }
+                return null;
             }
-
-            string scopedKey = "[" + scope + "]" + text;
-            string value;
-            if (_global.TryGetValue(scopedKey, out value)) return value;
-
-            string clean = KeyScrubber.Scrub(text).Trim();
-            if (clean.Length > 0 && _global.TryGetValue("[" + scope + "]" + clean, out value))
+            finally
             {
-                return value;
+                Diagnostics.PerfProbe.End(Diagnostics.PerfProbe.Seg.Scoped, probe);
             }
-            return null;
         }
 
         /// <summary>该作用域是否被声明为强制作用域（只走本作用域词条 + 全局精确，不做模糊匹配）。</summary>
@@ -400,42 +410,51 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// </summary>
         internal bool TryGetTemplate(string text, out string value)
         {
-            value = null;
-            if (string.IsNullOrEmpty(text)) return false;
-            if (_templates.Count == 0 && _paramTemplates.Count == 0) return false;
-            if (text.Length < _minTemplateKeyLength) return false;
-
-            string canonical = TextCanonicalizer.Canonicalize(text);
-            if (canonical.Length < _minTemplateKeyLength) return false;
-            if (_templates.TryGetValue(canonical, out value) && value != null) return true;
-
-            // ---- 回落一：去标签指纹
-            if (_templateFingerprints.Count > 0)
+            // 「模板」段（性能探针，默认关）：整段套计时，多条提前返回路径都由 finally 收口。
+            long probe = Diagnostics.PerfProbe.Begin();
+            try
             {
-                string fingerprint = TextCanonicalizer.Fingerprint(canonical);
-                if (fingerprint.Length >= TextCanonicalizer.MinFingerprintLength
-                    && _templateFingerprints.TryGetValue(fingerprint, out value)
-                    && value != null)
-                {
-                    TemplateFingerprintHits++;
-                    return true;
-                }
-            }
+                value = null;
+                if (string.IsNullOrEmpty(text)) return false;
+                if (_templates.Count == 0 && _paramTemplates.Count == 0) return false;
+                if (text.Length < _minTemplateKeyLength) return false;
 
-            // ---- 回落二：参数化模板（{#} = 一段数字）。命中即展开成最终译文。
-            if (_paramTemplates.Count > 0)
+                string canonical = TextCanonicalizer.Canonicalize(text);
+                if (canonical.Length < _minTemplateKeyLength) return false;
+                if (_templates.TryGetValue(canonical, out value) && value != null) return true;
+
+                // ---- 回落一：去标签指纹
+                if (_templateFingerprints.Count > 0)
+                {
+                    string fingerprint = TextCanonicalizer.Fingerprint(canonical);
+                    if (fingerprint.Length >= TextCanonicalizer.MinFingerprintLength
+                        && _templateFingerprints.TryGetValue(fingerprint, out value)
+                        && value != null)
+                    {
+                        TemplateFingerprintHits++;
+                        return true;
+                    }
+                }
+
+                // ---- 回落二：参数化模板（{#} = 一段数字）。命中即展开成最终译文。
+                if (_paramTemplates.Count > 0)
+                {
+                    string expanded = MatchParamTemplates(canonical);
+                    if (expanded != null)
+                    {
+                        ParamTemplateHits++;
+                        value = expanded;
+                        return true;
+                    }
+                }
+
+                value = null;
+                return false;
+            }
+            finally
             {
-                string expanded = MatchParamTemplates(canonical);
-                if (expanded != null)
-                {
-                    ParamTemplateHits++;
-                    value = expanded;
-                    return true;
-                }
+                Diagnostics.PerfProbe.End(Diagnostics.PerfProbe.Seg.Template, probe);
             }
-
-            value = null;
-            return false;
         }
 
         /// <summary>
