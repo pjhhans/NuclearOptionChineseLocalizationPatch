@@ -1,0 +1,54 @@
+# ============================================================================
+#  Nuclear Option 简体中文汉化补丁 —— 代码风格约束
+#
+#  作用：把仓库既有的风格事实写成机读规则，供 IDE 提示与新改动参照。
+#  本文件不改变任何运行时行为，也未开启 EnforceCodeStyleInBuild，
+#  因此 IDE 类规则只在编辑器内提示，不会影响 dotnet build 的结果。
+# ============================================================================
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.cs]
+# ---------------------------------------------------------------- 排版
+# 大括号另起一行（Allman）—— 全仓现用写法
+csharp_new_line_before_open_brace = all
+
+# 单行块不强制补大括号
+csharp_prefer_braces = false:suggestion
+
+# var 策略：类型显而易见时允许，其余要求显式类型
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+# ---------------------------------------------------------------- 命名
+# 类型 / 方法 / 属性：PascalCase
+dotnet_naming_rule.types_methods_pascal.severity = suggestion
+dotnet_naming_rule.types_methods_pascal.symbols = types_methods
+dotnet_naming_rule.types_methods_pascal.style = pascal
+dotnet_naming_symbols.types_methods.applicable_kinds = class,struct,interface,enum,method,property
+dotnet_naming_style.pascal.capitalization = pascal_case
+
+# 私有实例字段：_camelCase
+# （静态字段与常量沿用 .NET 惯例的 PascalCase，不纳入本规则，避免误报）
+dotnet_naming_rule.instance_fields_underscore.severity = suggestion
+dotnet_naming_rule.instance_fields_underscore.symbols = instance_fields
+dotnet_naming_rule.instance_fields_underscore.style = underscore_camel
+dotnet_naming_symbols.instance_fields.applicable_kinds = field
+dotnet_naming_symbols.instance_fields.applicable_accessibilities = private
+dotnet_naming_symbols.instance_fields.required_modifiers = readonly
+dotnet_naming_style.underscore_camel.required_prefix = _
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+
+# ---------------------------------------------------------------- 分析器
+# 未使用的 using：默认 hidden（静默），提为可见提示以便清理。
+# 清理完成后可将 severity 提到 warning。
+dotnet_diagnostic.CS8019.severity = suggestion
+dotnet_diagnostic.IDE0005.severity = suggestion
