@@ -21,6 +21,10 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
 - **自带诊断窗口。** `F11` 呼出设置与诊断窗口，含「最近命中」与「最近漏译」（两者默认不记录，需要时在窗口里勾选）。
 - **会连带影响第三方内容。** 创意工坊物件的名字也会被翻译，且只覆盖一部分 —— 见下。
 
+> **文档分工**：本 README 只回答「是什么 / 怎么装 / 怎么用」；数据契约、模块分层、性能成本模型
+> 与联机风险的**完整论证**见 [`docs/`](docs/)（[`ARCHITECTURE.md`](docs/ARCHITECTURE.md) /
+> [`RISKS.md`](docs/RISKS.md)）。凡是「为什么这么设计」的内容一律在 `docs/`，README 只给结论。
+
 ---
 
 ## 安装
@@ -254,7 +258,7 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
 ### 仓库结构
 
 ```
-├─ src/                              插件源码（约 5400 行）
+├─ src/                              插件源码（约 5500 行）
 │   ├─ LocalizationPlugin.cs             入口：启动编排、配置、重载、开关
 │   ├─ Core/                             翻译核心（与 Unity 无关，可单独测试）
 │   │   ├─ TextLocalizer.cs                  流水线：A 整串 → B 句式 → B2 片段 → C 切片
@@ -266,18 +270,28 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
 │   ├─ Patching/                         Harmony 补丁与防回写
 │   │   ├─ TmpPatches.cs                     TMP 打点（主战场）
 │   │   ├─ LegacyUiPatches.cs                旧版 UI.Text 打点
-│   │   ├─ PylonDropdownPatches.cs           挂架下拉框界面修整（宽度自适应/滚动条/滚轮）
-│   │   ├─ WeaponInfoCardPatches.cs          基地武器信息卡稳定化（表格化/滚动视图）
 │   │   ├─ PatchHelpers.cs                   补丁层公共入口
 │   │   └─ RewriteGuard.cs                   防回写守护
-│   ├─ Resources/                        宿主、路径、字体、设置窗口
+│   ├─ UiMods/                           界面修整（几何 / 表格 / 滚动）
+│   │   ├─ WeaponInfoCardPatches.cs          基地武器信息卡（补丁入口）
+│   │   ├─ WeaponInfoCardTable.cs            信息卡参数区表格化
+│   │   ├─ WeaponInfoCardStabilizer.cs       信息卡几何稳定 + 描述滚动视图
+│   │   ├─ PylonDropdownPatches.cs           挂架下拉框（宽度自适应 / 滚动条 / 滚轮）
+│   │   ├─ PylonDropdownPopupPatches.cs      下拉弹层加宽与滚轮装配
+│   │   ├─ DropdownWheelDriver.cs            弹层滚轮驱动组件
+│   │   ├─ DropdownGeom.cs                   下拉弹层几何工具
+│   │   ├─ RectGeom.cs                       矩形几何工具
+│   │   └─ WidgetWheel.cs                    滚轮轮询（描述 / 下拉共用）
+│   ├─ Hosting/                          逐帧宿主（热键 / 兜底扫描 / 防回写驱动）
+│   ├─ Ui/                               F11 设置与诊断窗口
+│   ├─ Resources/                        路径解析与中文字体加载
 │   ├─ Configuration/                    配置项定义
-│   └─ Diagnostics/                      日志、漏译记录、自检
+│   └─ Diagnostics/                      日志、漏译记录、状态快照、自检
 ├─ data/                             词表与资源（构建时同步到插件目录）
 │   ├─ translation.json                  通用词条
 │   ├─ templates.json                    整段模板（`~` 前缀）
 │   ├─ fragments.json                    拼接片段（`>>` / `<<` / `==` 前缀）
-│   ├─ scopes/                           作用域词条，按语义域分文件
+│   ├─ scopes/                           作用域词条，按语义域分 7 个文件
 │   ├─ exclusions.json                   不翻译 / 保持英文名单
 │   ├─ force_scopes.json                 强制作用域名单
 │   └─ fonts/font.ttf                    中文字体
@@ -288,6 +302,7 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
 │   ├─ check_data.py                 词表自检（编码 / 键唯一性 / 键序 / 括号规范 / 废弃译法回流）
 │   └─ review/                       翻译审核台（本机可视化校对工具，见其 README）
 ├─ README.md
+├─ CHANGELOG.md                      版本改动记录
 ├─ LICENSE                           MIT 许可
 ├─ THIRD-PARTY-NOTICES.md            第三方组件声明（字体 / 依赖 / 游戏原文）
 └─ NuclearOptionChineseLocalizationPatch.csproj
@@ -340,7 +355,7 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
 **维护层（`scopes/*.json` 文件分组，给人看的语义域，与运行时无对应关系）。**  
 一个文件里混着多个控件的词条，方括号里的名字才是真正的运行时作用域：
 
-| 文件             | 条数（截至 v1.6.20） | 收录内容                        |
+| 文件             | 条数（截至 v1.7.0） | 收录内容                        |
 | -------------- | ------------- | --------------------------- |
 | `ui.json`      | 1027          | 界面控件：按钮、标签、标题、提示、买卖与设置项     |
 | `mission.json` | 293           | 任务目标：任务标题、目标、简报、升级态势        |
