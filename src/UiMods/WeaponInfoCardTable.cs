@@ -22,12 +22,13 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
     internal static class WeaponInfoCardTable
     {
         /// <summary>
-        /// 表格几何（<b>按实例</b>）：[0]=左格数值列位 posLeft，[1]=右格数值列位 posRight，
-        /// [2]=右格起点 colC（相对行左缘），[3]=右格内容宽。
+        /// 表格几何（<b>按实例</b>）：<see cref="TableGeom.PosLeft"/>=左格数值列位，
+        /// <see cref="TableGeom.PosRight"/>=右格数值列位，<see cref="TableGeom.ColC"/>=右格起点
+        /// （相对行左缘），<see cref="TableGeom.RightContent"/>=右格内容宽。
         /// 同一列的所有行共享同一列位 → 数值跨行垂直对齐（表格效果）。
         /// 不同信息卡（基地菜单 / 挂架面板）字号不同，各自实测，互不污染。
         /// </summary>
-        internal static readonly Dictionary<int, float[]> Geom = new Dictionary<int, float[]>();
+        internal static readonly Dictionary<int, TableGeom> Geom = new Dictionary<int, TableGeom>();
 
         /// <summary>已做过原文转储的实例（诊断，防刷屏）。</summary>
         private static readonly HashSet<int> _dumped = new HashSet<int>();
@@ -165,8 +166,8 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
             posLeft = Mathf.Round(posLeft);
             posRight = Mathf.Round(posRight);
             float colCMeas = Mathf.Clamp(Mathf.Round(colC), 116f, 224f); // 参数区收 1/5（用户裁决）
-            if (Geom.TryGetValue(id, out float[] tgF) && tgF.Length > 2)
-                colC = Mathf.Max(tgF[2], colCMeas);
+            if (Geom.TryGetValue(id, out TableGeom tgF))
+                colC = Mathf.Max(tgF.ColC, colCMeas);
             else
                 colC = colCMeas;
 
@@ -181,7 +182,7 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
                 float fs = kv.Key.fontSize > 0f ? kv.Key.fontSize : 18f;
                 rightContent = Mathf.Max(rightContent, RectGeom.CellWidth(kv.Key, s, fs));
             }
-            Geom[id] = new[] { posLeft, posRight, colC, rightContent };
+            Geom[id] = new TableGeom(posLeft, posRight, colC, rightContent);
 
             // 第二遍：把显示文本（含每列共享列位标签）写回 —— 已是中文，
             // 翻译管线对其恒等；下次 DisplayInfo 会被游戏重写为新原文，无残留。
@@ -199,6 +200,26 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
                 kv.Key.text = s.Substring(0, idx + 1) + "<pos=" + Mathf.RoundToInt(pos) + ">"
                     + s.Substring(idx + 1).TrimStart();
             }
+        }
+    }
+
+    /// <summary>
+    /// 信息卡的表格列几何（原为 <c>float[4]</c>，字段化以消除魔法下标）：
+    /// 左格数值列位 / 右格数值列位 / 右格起点 colC / 右格内容宽。
+    /// </summary>
+    internal readonly struct TableGeom
+    {
+        internal readonly float PosLeft;
+        internal readonly float PosRight;
+        internal readonly float ColC;
+        internal readonly float RightContent;
+
+        internal TableGeom(float posLeft, float posRight, float colC, float rightContent)
+        {
+            PosLeft = posLeft;
+            PosRight = posRight;
+            ColC = colC;
+            RightContent = rightContent;
         }
     }
 }

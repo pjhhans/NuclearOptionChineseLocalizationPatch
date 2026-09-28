@@ -96,36 +96,33 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
             return false;
         }
 
-        /// <summary>矩形当前几何快照 <c>{x, y, w, h}</c>（父级局部像素）；未激活返回 null。</summary>
-        internal static float[] Snapshot(RectTransform rt)
+        /// <summary>矩形当前几何快照（父级局部像素）；未激活返回 null。</summary>
+        internal static RectPin? Snapshot(RectTransform rt)
         {
             if (rt == null || !rt.gameObject.activeInHierarchy)
                 return null;
-            return new[]
-            {
-                rt.anchoredPosition.x, rt.anchoredPosition.y, rt.rect.width, rt.rect.height,
-            };
+            return new RectPin(rt.anchoredPosition.x, rt.anchoredPosition.y, rt.rect.width, rt.rect.height);
         }
 
         /// <summary>按钉死几何回放矩形（位置 + 尺寸；尺寸差 &gt;0.5px 才写）。</summary>
-        internal static void ApplyRect(RectTransform rt, float[] pin, bool setHeight = true)
+        internal static void ApplyRect(RectTransform rt, RectPin pin, bool setHeight = true)
         {
             const float eps = 0.5f;
-            if (Mathf.Abs(rt.rect.width - pin[2]) > eps)
-                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, pin[2]);
-            if (setHeight && Mathf.Abs(rt.rect.height - pin[3]) > eps)
-                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, pin[3]);
+            if (Mathf.Abs(rt.rect.width - pin.W) > eps)
+                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, pin.W);
+            if (setHeight && Mathf.Abs(rt.rect.height - pin.H) > eps)
+                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, pin.H);
             ApplyPos(rt, pin);
         }
 
         /// <summary>按钉死几何回放位置（位移 &gt;0.5px 才写，避免每帧无谓写入触发重建）。</summary>
-        internal static void ApplyPos(RectTransform rt, float[] pin)
+        internal static void ApplyPos(RectTransform rt, RectPin pin)
         {
             const float eps = 0.5f;
-            float dx = rt.anchoredPosition.x - pin[0];
-            float dy = rt.anchoredPosition.y - pin[1];
+            float dx = rt.anchoredPosition.x - pin.X;
+            float dy = rt.anchoredPosition.y - pin.Y;
             if (dx * dx + dy * dy > eps * eps)
-                rt.anchoredPosition = new Vector2(pin[0], pin[1]);
+                rt.anchoredPosition = new Vector2(pin.X, pin.Y);
         }
 
         /// <summary>屏幕 px → 世界 px 的换算系数（Overlay 画布 scaleFactor 即每单位像素数）。</summary>
@@ -134,5 +131,28 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
             Canvas cv = rt != null ? rt.GetComponentInParent<Canvas>() : null;
             return cv != null && cv.scaleFactor > 0f ? cv.scaleFactor : 1f;
         }
+    }
+
+    /// <summary>
+    /// 矩形的钉死快照（父级局部坐标 + 尺寸）。等价于原先的 <c>float[] { x, y, w, h }</c>，
+    /// 但字段有名字、不再依赖 <c>[0]…[3]</c> 的魔法下标；又因为是值类型，顺带免掉了逐帧的小数组分配。
+    /// </summary>
+    internal readonly struct RectPin
+    {
+        internal readonly float X;
+        internal readonly float Y;
+        internal readonly float W;
+        internal readonly float H;
+
+        internal RectPin(float x, float y, float w, float h)
+        {
+            X = x;
+            Y = y;
+            W = w;
+            H = h;
+        }
+
+        /// <summary>只改 X 的副本（参数块整体平移用）。</summary>
+        internal RectPin WithX(float x) => new RectPin(x, Y, W, H);
     }
 }
