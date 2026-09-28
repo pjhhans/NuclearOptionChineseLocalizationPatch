@@ -32,10 +32,10 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 
 | 文件 | 内容 | 当前条数 |
 | --- | --- | --- |
-| `translation.json` | 通用词条（无前缀键） | 3108 |
-| `templates.json` | `~` | 129 |
+| `translation.json` | 通用词条（无前缀键） | 3111 |
+| `templates.json` | `~` | 120 |
 | `fragments.json` | `>>` / `<<` / `==` | 61 |
-| `scopes/*.json` | `[Scope]` 词条，按**语义域**分 6 个文件 | 1087 |
+| `scopes/*.json` | `[Scope]` 词条，按**语义域**分 6 个文件 | 1084 |
 
 语义域 = `ui` 界面控件 / `units` 单位兵器 / `mission` 任务目标 / `hud` 座舱读数 /
 `world` 地图战报 / `editor` 编辑器与多人。代码另有 `misc` 兜底分类
@@ -56,7 +56,7 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 
 **为什么按前缀分文件**（性能优先，不是照抄第三方包的 16 个主题文件）：前三类与运行时的
 索引结构 **1:1 对应**（`_global` / `_templates` + 指纹 / 三张片段表），拆开后每个文件只喂
-一种索引；最热的 `_global` 从 5000+ 缩到 3108 条，`LookupScoped` 的首次探测（每条要渲染的
+一种索引；最热的 `_global` 从 5000+ 缩到 3111 条，`LookupScoped` 的首次探测（每条要渲染的
 文本都会走一次）落在几十~几百条的小表上。对方的 16 个主题文件是 XUnity.AutoTranslator
 **按作用域懒加载**逼出来的形态 —— 我们一次性建索引，文件数量的意义只是启动时的打开次数。
 
@@ -89,6 +89,13 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 > 「直接 Trim」等价，于是 `Canonicalize` 直接返回、不构造正则替换出的新串。这是热路径上
 > 最贵的一步，而整份词表里只有 6 条（0.12%）真的需要跑折叠正则。
 > **改这段之前先读 `TextCanonicalizer` 上的注释**，等价性判据有配套的语料 diff 测试。
+
+> **门禁由最短的那条模板键决定**（`_minTemplateKeyLength`）。`TryGetTemplate` 的第一道闸是
+> `text.Length < _minTemplateKeyLength` → 直接返回，而它挡在 `Canonicalize` **之前**：
+> 门禁每低一档，所有长度 ≥ 门禁的文本（**缓存命中也不例外**）都要多付一次归一化。
+> 这条曾被 `~Taxi`（4 字符）钉在 4，2026-09-28 清掉 9 条纯冗余短模板才升到 11。
+> ⇒ **模板不一定越长越好，但一定不能短** —— 加模板前先想一遍它对门禁的影响；
+> `tools/check_data.py` 的「模板门禁」提示会报出当前值与被钉住它的那条键。
 
 #### 为什么模板还需要「指纹回落」
 
