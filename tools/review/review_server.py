@@ -97,7 +97,7 @@ FLAG_META = {
     "space":     ("译文首尾空白",       "mid",  "译文与原文的首尾空白不一致（原文有则忠实保留，无则不该多）"),
     "ascii":     ("译文含拉丁字母",     "low",  "可能是未译尽，也可能是有意保留的型号/缩写，逐条判断"),
     "no-cjk":    ("译文不含中文",       "low",  "identity 键或刻意保留英文的项；若不该保留则是漏译"),
-    "identity":  ("译文等同原文",       "low",  "刻意的 identity（目标代号等）不算漏译，但值得确认是否真有必要"),
+    "identity":  ("译文等同原文",       "low",  "刻意的 identity（目标代号等）不算漏译；裸键与 scoped（剥 [Scope] 后相等）都算。它们本就不进漏译记录——是零成本的反向保护，删除前先想清楚要不要迁去排除名单"),
     "long":      ("译文显著偏长",       "low",  "显示宽度超过原文 3 倍，短槽位标签有撑破风险"),
     "runtime":   ("出现在运行期清单",   "mid",  "实机 missing/untranslated 里出现过这条（近似判定）"),
 }
@@ -281,7 +281,10 @@ class Table(object):
     @staticmethod
     def _flags_of(key, value, case_dups, multi_keys):
         out = []
-        if value == key:
+        # identity 有两种形态：裸键整串相等（AGM-48 -> AGM-48），以及
+        # scoped 键剥掉 [Scope] 前缀后正文与译文相等（[TargetCode]SAM R -> SAM R）。
+        # 剥前缀用 SCOPE_RE，与 plain_of() 同一口径；片段/模板键（~><= 开头）不参与。
+        if value == key or (key[:1] not in "~><=" and SCOPE_RE.sub("", key) == value):
             out.append("identity")
         if not CJK_RE.search(value):
             out.append("no-cjk")
