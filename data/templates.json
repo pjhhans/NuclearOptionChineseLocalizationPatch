@@ -118,5 +118,12 @@
   "~When you come to a stop at an airbase, you can disembark the plane using the Eject key \u0001\n\nThis will return your plane to your inventory. This will be important later.": "在空军基地停稳后，你可以按弹射键 \u0001 离开飞机。\n\n这会把飞机收回你的库存。这一点后面很重要。",
   "~You are pulling away too soon. While the best and most obvious survival method is to avoid the SAM in the first place, for the sake of this demonstration, please take unreasonable risk.": "你脱离得太早了。虽然最好也最显然的生存办法是一开始就避开防空导弹，但为了这次演示，请冒一次不合理的风险。",
   "~You can add multiple targets to your designation.\n\nTo remove the last selected target, press Target Cancel \u0001\nTo clear the designation entirely, hold the button down.": "你可以向目标指定中加入多个目标。\n\n要移除最后选定的目标，按目标取消键 \u0001\n要完全清除指定，请按住该键。",
-  "~You can defeat IR missiles by using flares - intense heat signatures - that can either distract or dazzle the seeker head.\n\nEvery aircraft in the arsenal has flares.": "你可以用干扰弹——强烈的热信号——来对抗红外导弹，它们能干扰或致盲导引头。\n\n武库中的每架飞机都配备干扰弹。"
+  "~You can defeat IR missiles by using flares - intense heat signatures - that can either distract or dazzle the seeker head.\n\nEvery aircraft in the arsenal has flares.": "你可以用干扰弹——强烈的热信号——来对抗红外导弹，它们能干扰或致盲导引头。\n\n武库中的每架飞机都配备干扰弹。",
+  "~{#}x AeroSentry SPAAG": "{#}x 天空卫士 自行高炮",
+  "~{#}x Linebreaker APC": "{#}x 冲击者装甲输送车",
+  "~{#}x Linebreaker IFV": "{#}x 冲击者步兵战车",
+  "~{#}x Linebreaker SAM": "{#}x 冲击者防空导弹车",
+  "~{#}x MSV Munitions": "{#}x MSV 弹药车",
+  "~{#}x Spearhead MBT": "{#}x 先锋主战坦克",
+  "~{#}x T9K41 Boltstrike": "{#}x T9K41 雷霆打击者"
 }
