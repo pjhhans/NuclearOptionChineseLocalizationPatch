@@ -36,16 +36,11 @@ dotnet_naming_rule.types_methods_pascal.style = pascal
 dotnet_naming_symbols.types_methods.applicable_kinds = class,struct,interface,enum,method,property
 dotnet_naming_style.pascal.capitalization = pascal_case
 
-# 私有实例字段：_camelCase
-# （静态字段与常量沿用 .NET 惯例的 PascalCase，不纳入本规则，避免误报）
-dotnet_naming_rule.instance_fields_underscore.severity = suggestion
-dotnet_naming_rule.instance_fields_underscore.symbols = instance_fields
-dotnet_naming_rule.instance_fields_underscore.style = underscore_camel
-dotnet_naming_symbols.instance_fields.applicable_kinds = field
-dotnet_naming_symbols.instance_fields.applicable_accessibilities = private
-dotnet_naming_symbols.instance_fields.required_modifiers = readonly
-dotnet_naming_style.underscore_camel.required_prefix = _
-dotnet_naming_style.underscore_camel.capitalization = camel_case
+# 字段命名惯例（只作说明，不设机器规则）：
+#   私有实例字段 → _camelCase（_cacheLimit / _wheelOk …）
+#   静态与常量字段 → PascalCase（Tag / HorizontalSpace / DescGap …，.NET 惯例）
+# editorconfig 无法表达「仅实例字段」，硬套字段规则会把 static readonly 一并误报，
+# 故此处不设规则，只把两种惯例写清楚。
 
 # ---------------------------------------------------------------- 分析器
 # 未使用的 using：默认 hidden（静默），提为可见提示以便清理。
