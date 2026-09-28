@@ -78,5 +78,6 @@
   "[seeker_value]INS": "INS",
   "[throttleLabel]ANTI-GRAV": "反重力",
   "[throttleReading]AFTERBURNER": "加力燃烧",
-  "[throttleReading]MIL": "军推"
+  "[throttleReading]MIL": "军推",
+  "[throttleReading]REV": "反推"
 }
