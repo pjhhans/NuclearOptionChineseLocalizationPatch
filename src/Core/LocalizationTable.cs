@@ -46,6 +46,20 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
+        /// 通用表里是否混有 <c>[Scope]原文</c> 形态的键。
+        ///
+        /// <para>正常载入下恒为 false：<see cref="Ingest"/> 会把所有这类键分流进
+        /// <see cref="Scoped"/> 分表，两者用的是同一套前缀判据。于是
+        /// <see cref="LookupScoped"/> 末尾那段「主表里的 <c>[Scope]原文</c>」回落
+        /// 是**可证死路径**（每次未命中都要白付两次字符串拼接与两次忽略大小写哈希）。</para>
+        ///
+        /// <para>唯一的例外是作用域名超过 41 字符 —— 那超出了
+        /// <c>ExclusionRules.TrySplitScopePrefix</c> 的判据，载入时落进通用表。
+        /// 这种情况只在真正发生时置位，回落才重新生效，语义与之前完全一致。</para>
+        /// </summary>
+        private bool _globalHasBracketKeys;
+
+        /// <summary>
         /// 模板键的**去标签指纹**索引，用于「标签个数与词表键不一致」时的回落匹配。
         ///
         /// <para>值为 <c>null</c> 表示该指纹有**两个以上**模板键共用 ⇒ 无法判定是哪一个，
@@ -150,6 +164,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             _paramTemplates.Clear(); ParamTemplateHits = 0;
             _prefixFragments.Clear(); _suffixFragments.Clear(); _infixFragments.Clear();
             _scoped.Clear(); _scopedEntries = 0; _forceScoped.Clear();
+            _globalHasBracketKeys = false;
             _minTemplateKeyLength = int.MaxValue;
 
             Ingest(main);
@@ -255,6 +270,9 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     string cleaned = KeyScrubber.Scrub(key).Trim();
                     if (cleaned.Length == 0) continue;
                     _global[cleaned] = value;
+                    // 只有超出作用域前缀判据（作用域名 > 41 字符）的键会走到这里还带 '['，
+                    // 它就是 LookupScoped 末尾那段回落的唯一服务对象。
+                    if (cleaned[0] == '[') _globalHasBracketKeys = true;
                     RegisterReverse(ExclusionRules.StripScopePrefix(cleaned), value);
                 }
             }
@@ -374,6 +392,11 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     string cleaned = KeyScrubber.Scrub(text).Trim();
                     if (cleaned.Length > 0 && dict.TryGetValue(cleaned, out hit)) return hit;
                 }
+
+                // 主表里的 [Scope]原文 形态。载入期已证明通用表里不会有这类键
+                // （见 _globalHasBracketKeys），所以这里默认整段跳过 ——
+                // 省掉每次未命中的两次拼接与两次忽略大小写哈希。
+                if (!_globalHasBracketKeys) return null;
 
                 string scopedKey = "[" + scope + "]" + text;
                 string value;
