@@ -197,6 +197,19 @@ src/
 > `PluginHost.LateTick` 事件，由入口 `LocalizationPlugin` 单向接线（`LateTick += RewriteGuard.Tick`），
 > 宿主对补丁层一无所知。
 
+### 3.2 命名与目录规范
+
+机读规则在仓库根的 [`.editorconfig`](../.editorconfig)：缩进 4 空格、LF 行尾、Allman 大括号、
+`var` 策略、类型/方法 PascalCase。以下是它表达不了、靠约定维持的几条：
+
+| 约定 | 说明 |
+| --- | --- |
+| **字段命名** | 私有实例字段 `_camelCase`；静态字段与常量 PascalCase（.NET 惯例） |
+| **一文件一顶层类型** | 一个 `.cs` 只放一个顶层类型；紧邻其使用者的私有小结构体（`RectPin` / `TableGeom`）可同文件 |
+| **补丁类与 helper 分家** | 含 `[HarmonyPatch]` 的文件里**只放补丁方法**，helper 放同目录的非补丁类（如 `UiMods/RectGeom.cs`）—— 否则 Harmony 分析器会把 helper 对自身参数的赋值误报成 `Harmony003` |
+| **目录按变更原因分层** | 上表；新增文件先判断「它因什么而变化」，再决定放哪一层 |
+| **`tools/` 脚本命名** | 面向使用者的入口脚本无前缀（`check_data.py` / `split_table.py` / `make_release_zip.py`）；内部/一次性脚本以 `_` 前缀。`_table_layout.py` 是**历史例外**：它是词表布局的**唯一事实来源**，重命名会波及文档与其它脚本的引用，故保留原名 |
+
 ### 3.1 生命周期：为什么需要独立的逐帧宿主
 
 **这是本工程最容易踩、也最隐蔽的坑，改动入口类前务必先读完本节。**
