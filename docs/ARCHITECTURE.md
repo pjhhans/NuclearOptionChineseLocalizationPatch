@@ -18,7 +18,7 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 
 数据契约是本工程的对外接口，**代码围绕它实现，而不是反过来**。
 
-### 2.1 词表 `data/`（布局 v2：10 个文件）
+### 2.1 词表 `data/`（布局 v2：9 个文件）
 
 键按前两个字符分四类，**并按前缀分文件存放**：
 
@@ -32,13 +32,14 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 
 | 文件 | 内容 | 当前条数 |
 | --- | --- | --- |
-| `translation.json` | 通用词条（无前缀键） | 3035 |
+| `translation.json` | 通用词条（无前缀键） | 3108 |
 | `templates.json` | `~` | 129 |
 | `fragments.json` | `>>` / `<<` / `==` | 61 |
-| `scopes/*.json` | `[Scope]` 词条，按**语义域**分 7 个文件 | 1263 |
+| `scopes/*.json` | `[Scope]` 词条，按**语义域**分 6 个文件 | 1087 |
 
 语义域 = `ui` 界面控件 / `units` 单位兵器 / `mission` 任务目标 / `hud` 座舱读数 /
-`world` 地图战报 / `editor` 编辑器与多人 / `misc` 杂项（任务描述、摄像机、大厅等零散控件）。
+`world` 地图战报 / `editor` 编辑器与多人。代码另有 `misc` 兜底分类
+（`FALLBACK_CATEGORY`），当前没有未归类的作用域，故无该文件。
 **文件顺序即加载顺序**
 （`translation` → `templates` → `fragments` → `scopes/*` 按名排序），
 反向索引「先到先得」；顺序会决定同一个中文归给谁。
@@ -55,7 +56,7 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 
 **为什么按前缀分文件**（性能优先，不是照抄第三方包的 16 个主题文件）：前三类与运行时的
 索引结构 **1:1 对应**（`_global` / `_templates` + 指纹 / 三张片段表），拆开后每个文件只喂
-一种索引；最热的 `_global` 从 5000+ 缩到 3035 条，`LookupScoped` 的首次探测（每条要渲染的
+一种索引；最热的 `_global` 从 5000+ 缩到 3108 条，`LookupScoped` 的首次探测（每条要渲染的
 文本都会走一次）落在几十~几百条的小表上。对方的 16 个主题文件是 XUnity.AutoTranslator
 **按作用域懒加载**逼出来的形态 —— 我们一次性建索引，文件数量的意义只是启动时的打开次数。
 
@@ -63,7 +64,7 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 而本仓库的作用域名里有 **6 组只差大小写**（`Text`/`text`、`Label`/`label`、`Title`/`title`、
 `Header`/`header`、`CounterMeasureName`/`countermeasureName`、`SellLabel`/`sellLabel`），
 另有带尾随空格的 `Text (TMP) `、`header ` —— 一个作用域一个文件会**直接丢数据**。
-分成 7 个语义域文件后，作用域名只出现在**键的前缀**里，与文件名彻底解耦，
+分成 6 个语义域文件后，作用域名只出现在**键的前缀**里，与文件名彻底解耦，
 这两个坑一并消失。
 
 **词表是唯一事实来源**：翻译逻辑只能根据上表实现，不得引入表外约定。
