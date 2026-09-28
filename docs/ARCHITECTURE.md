@@ -32,10 +32,10 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 
 | 文件 | 内容 | 当前条数 |
 | --- | --- | --- |
-| `translation.json` | 通用词条（无前缀键） | 3111 |
-| `templates.json` | `~` | 120 |
-| `fragments.json` | `>>` / `<<` / `==` | 61 |
-| `scopes/*.json` | `[Scope]` 词条，按**语义域**分 6 个文件 | 1084 |
+| `translation.json` | 通用词条（无前缀键） | 3114 |
+| `templates.json` | `~` | 127 |
+| `fragments.json` | `>>` / `<<` / `==` | 62 |
+| `scopes/*.json` | `[Scope]` 词条，按**语义域**分 6 个文件 | 1083 |
 
 语义域 = `ui` 界面控件 / `units` 单位兵器 / `mission` 任务目标 / `hud` 座舱读数 /
 `world` 地图战报 / `editor` 编辑器与多人。代码另有 `misc` 兜底分类
@@ -56,7 +56,7 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 
 **为什么按前缀分文件**（性能优先，不是照抄第三方包的 16 个主题文件）：前三类与运行时的
 索引结构 **1:1 对应**（`_global` / `_templates` + 指纹 / 三张片段表），拆开后每个文件只喂
-一种索引；最热的 `_global` 从 5000+ 缩到 3111 条，`LookupScoped` 的首次探测（每条要渲染的
+一种索引；最热的 `_global` 从 5000+ 缩到 3114 条，`LookupScoped` 的首次探测（每条要渲染的
 文本都会走一次）落在几十~几百条的小表上。对方的 16 个主题文件是 XUnity.AutoTranslator
 **按作用域懒加载**逼出来的形态 —— 我们一次性建索引，文件数量的意义只是启动时的打开次数。
 
@@ -122,7 +122,8 @@ Nuclear Option 是 Unity + TextMeshPro 的游戏，界面文本几乎全部走
 - 匹配规则：`{#}` 至少吃一位数字（贪婪），`{#}` 之间的**固定段不得以数字开头**
   （否则前一个 `{#}` 贪婪吃位后，剩余数字会被误判进固定段）；整串必须被完整消耗。
 - 命中后把捕获到的数字按顺序回填进译文的 `{#}`。
-- 例：`~Requisition\n via Rank ({#})` → `申请需 {#} 级`。
+- 例：`~Requisition\n via Rank ({#})` → `申请需 {#} 级`；`~{#}x MSV Munitions` → `{#}x MSV 弹药车`
+  （数量前缀，源自程序集里的 `{0}x {1}` 格式串——同一批单位名**早有裸键**，缺的只是前缀）。
 
 ### 2.3 排除名单 `data/exclusions.json`
 
