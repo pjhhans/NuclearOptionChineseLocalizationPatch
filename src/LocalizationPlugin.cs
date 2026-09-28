@@ -64,7 +64,7 @@ namespace NuclearOptionChineseLocalizationPatch
             Localizer = new TextLocalizer(Table, Exclusions, MissLog);
             Localizer.Enabled = Settings.Enabled.Value;
             Localizer.SetCacheLimit(Settings.TranslationCacheLimit.Value);
-            Patching.PylonDropdownPatches.Enabled = Settings.WidenWeaponDropdown.Value;
+            UiMods.PylonDropdownPatches.Enabled = Settings.WidenWeaponDropdown.Value;
             UiMods.WeaponInfoCardPatches.Enabled = Settings.FixWeaponInfoCard.Value;
 
             RuntimeStatus.DataDir = PluginPaths.BaseDir;

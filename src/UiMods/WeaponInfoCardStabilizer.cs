@@ -561,27 +561,15 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
                 desc.sizeDelta = new Vector2(sd.x, contentH);
 
             float maxScroll = Mathf.Max(0f, contentH - vpH);
-            if (maxScroll > 0f && _wheelOk)
+            if (maxScroll > 0f)
             {
-                try
-                {
-                    var canvas = st.Viewport.GetComponentInParent<Canvas>();
-                    var cam = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay
-                        ? canvas.worldCamera
-                        : null;
-                    if (RectTransformUtility.RectangleContainsScreenPoint(st.Viewport, Input.mousePosition, cam))
-                    {
-                        float wheel = Input.mouseScrollDelta.y;
-                        if (wheel > 0.001f)
-                            st.ScrollOffset -= 45f;
-                        else if (wheel < -0.001f)
-                            st.ScrollOffset += 45f;
-                    }
-                }
-                catch (System.InvalidOperationException)
-                {
-                    _wheelOk = false; // 新 Input System 环境无 legacy 轮询，静默停用滚轮
-                }
+                // 指针在视口内时按滚轮符号走 45px/档（轮询实现见 WidgetWheel，
+                // 与下拉列表的滚轮共用同一套降级逻辑）
+                int wheel = WidgetWheel.Poll(st.Viewport);
+                if (wheel > 0)
+                    st.ScrollOffset -= 45f;
+                else if (wheel < 0)
+                    st.ScrollOffset += 45f;
             }
             st.ScrollOffset = Mathf.Clamp(st.ScrollOffset, 0f, maxScroll);
 
@@ -606,8 +594,6 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
             if ((hp - ht).sqrMagnitude > 0.25f)
                 st.Handle.anchoredPosition = ht;
         }
-
-        private static bool _wheelOk = true;
 
         /// <summary>拆除滚动视图：desc 归还原生父级与锚定，销毁视口/滚动条（Reset 用）。</summary>
         private static void TearDownScroll(InstState st, RectTransform desc)
