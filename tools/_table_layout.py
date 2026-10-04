@@ -111,7 +111,7 @@ SCOPE_GROUPS = {
         "pilotScore", "RankDisplay", "Type Text", "TypeText", "UnitDescription",
         "UnitName",
         "Weapon", "WeaponStation1_ammo", "WeaponStation2_ammo",
-        "WeaponStation3_ammo", "WeaponStation4_ammo", "weaponName",
+        "WeaponStation3_ammo", "WeaponStation4_ammo", "weaponName", "WeaponText",
     ],
     "mission": [
         "CaptureText", "Mission Label", "MissionDescription",
@@ -146,6 +146,9 @@ SCOPE_GROUPS = {
         "infoRange", "infoSpeed", "nozzleLabel", "range_value", "reverserActive",
         "reverserDisarmed", "reverserTitle", "targetDistLabel", "throttleLabel",
         "throttleReading",
+        # 2026-10-04 补录：MFD/落点指示器一屏的短标签（实机 missing.json 实发）
+        "System Master Text", "Flight Assist Text", "angle_error", "lateral_error",
+        "clutch_distance", "WepIndex_FWD", "WepIndex_REAR", "WepIndex_CENTRE",
     ],
     "world": [
         "AirbaseLabel", "AirbaseMapIcon", "AirbaseName", "AirbaseWarheads",
