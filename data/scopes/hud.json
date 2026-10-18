@@ -1,4 +1,5 @@
 {
+  "[AOA LIMITER]AOA LIMITER": "迎角限制",
   "[AP_CombinedOverlay]AJ": "AJ",
   "[Airspeed]Airpseed": "空速",
   "[Altitude Label]AGL": "AGL",
@@ -36,6 +37,7 @@
   "[GearTrimLabel]Gear Trim": "起落架配平",
   "[HdgText]TGT HDG": "目标航向",
   "[HookState]DEPLOYED": "已放下",
+  "[LeftEngineStatus]NOMINAL": "正常",
   "[LookAtText]LOOK AT": "看向",
   "[PFactorFastText]Pitch P Factor": "俯仰 P 系数",
   "[PFactorSlowText]Pitch autotrim P factor slow": "慢速俯仰自动配平 P 系数",
@@ -49,6 +51,8 @@
   "[PitchTrimRateLabel]Pitch Trim Rate": "俯仰配平速率",
   "[PowerTitle]KW": "KW",
   "[PowerTitle]kN": "kN",
+  "[PropGaugeTitle]PROPELLER": "螺旋桨",
+  "[Radio_04]MAIN": "主频",
   "[Revealed_Cam_Label]Cam": "相机",
   "[Revealed_InfoPanel_Label]InfoPanel": "信息面板",
   "[Revealed_List_Label]List": "列表",
@@ -89,5 +93,6 @@
   "[throttleLabel]ANTI-GRAV": "反重力",
   "[throttleReading]AFTERBURNER": "加力燃烧",
   "[throttleReading]MIL": "军推",
-  "[throttleReading]REV": "反推"
+  "[throttleReading]REV": "反推",
+  "[throttleReading]WEP": "应急功率"
 }
