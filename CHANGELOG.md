@@ -11,6 +11,18 @@
 
 ---
 
+## [未发布]
+
+### 修复【代码】
+- **捐款面板：选中车队后金额不刷新**（游戏 bug）。面板把「总价值 / 剩余资金」的刷新挂在内部状态
+  `contributionType == 2`（车辆模式）上，而 `SelectConvoy` 只写 `selectedConvoy`、不设该状态；
+  一旦它被 `ResetValues` / `CancelContribution` 重置，点选新车队就会出现「绿框走了、总价值仍是上一个车队的
+  数字、剩余资金也不扣减」，而 `PurchaseConvoy` 只读 `selectedConvoy`，所以实扣金额始终正常。
+  新增 `UiMods/ContributePanelPatches.cs`：在 `SelectConvoy` 前置把状态修正回 2，显示与实际一致。
+  配置项 `UI.FixContributePanel`（默认 `true`）。
+
+---
+
 ## [1.7.0] — 2026-09-28
 
 **大版本：内部结构与代码质量重构。对玩家可见行为零变化**（几何数值、步长、阈值、正则语义一律等价搬迁）。

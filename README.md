@@ -95,10 +95,13 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
    插件按首次布局把参数区固定成**表格**（参数一列、数值一列，列位跨武器对齐），  
    描述区位置固定、宽度延伸到右侧面板边界；描述过长超出卡片时自动出现  
    **滚动视图**（滚轮 + 右侧滚动条，内容装得下时自动隐藏），不再上下溢出。
+4. **捐款面板金额随选择刷新。** 原版在「为战争捐款」里点选另一个车队时，绿框跟着走了，  
+   但「总价值」还停在上一个车队的数字、「剩余资金」也不扣减（确认购买时实扣金额是对的）。  
+   插件在选中车队时把面板内部状态修正回「车辆模式」，总价值与剩余资金随选择刷新。
 
-- 修的是**运行时几何**，不修改任何游戏资产文件；
-- 只作用于机库挂架的下拉列表与基地武器信息卡，不波及设置页、涂装等其它界面；
-- 配置项 `UI.WidenWeaponDropdown`（默认 `true`）、`UI.FixWeaponInfoCard`（默认 `true`），见「配置」。
+- 修的是**运行时几何 / 状态**，不修改任何游戏资产文件；
+- 只作用于机库挂架的下拉列表、基地武器信息卡与捐款面板，不波及设置页、涂装等其它界面；
+- 配置项 `UI.WidenWeaponDropdown`、`UI.FixWeaponInfoCard`、`UI.FixContributePanel`（默认均为 `true`），见「配置」。
 
 ---
 
@@ -200,6 +203,7 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
 | General     | `ReloadDataHotkey`      | 空       | 不打开窗口、直接热重载词表的热键。留空表示只用窗口按钮                               |
 | UI          | `WidenWeaponDropdown`   | `true`  | 挂架武器下拉列表宽度自适应 + 滚动条方向修复（见「界面修整」）                          |
 | UI          | `FixWeaponInfoCard`     | `true`  | 基地武器信息卡几何稳定：切换武器时参数不漂移（见「界面修整」）                           |
+| UI          | `FixContributePanel`    | `true`  | 捐款面板选中车队后总价值 / 剩余资金随之刷新（见「界面修整」）                          |
 | Diagnostics | `VerboseLogging`        | `false` | 调试级日志。翻译在渲染路径上被高频调用，仅排障时开                                 |
 | Diagnostics | `LogMisses`             | `false` | 把未翻译文本累积到 `missing.json` / `untranslated.json`。**默认关**，见下 |
 | Performance | `ScanIntervalSeconds`   | `0`     | 兜底扫描间隔（秒）。`0` = **关闭兜底扫描**（默认）；> 0 时作为窗口滑块的初值             |
@@ -286,6 +290,7 @@ Nuclear Option 的**非官方**简体中文本地化插件，基于 BepInEx 5。
 │   │   ├─ WeaponInfoCardStabilizer.cs       信息卡几何稳定 + 描述滚动视图
 │   │   ├─ PylonDropdownPatches.cs           挂架下拉框（宽度自适应 / 滚动条 / 滚轮）
 │   │   ├─ PylonDropdownPopupPatches.cs      下拉弹层加宽与滚轮装配
+│   │   ├─ ContributePanelPatches.cs         捐款面板金额随选择刷新（状态修正）
 │   │   ├─ DropdownWheelDriver.cs            弹层滚轮驱动组件
 │   │   ├─ DropdownGeom.cs                   下拉弹层几何工具
 │   │   ├─ RectGeom.cs                       矩形几何工具 + RectPin 快照
