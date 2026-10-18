@@ -66,6 +66,7 @@ namespace NuclearOptionChineseLocalizationPatch
             Localizer.SetCacheLimit(Settings.TranslationCacheLimit.Value);
             UiMods.PylonDropdownPatches.Enabled = Settings.WidenWeaponDropdown.Value;
             UiMods.WeaponInfoCardPatches.Enabled = Settings.FixWeaponInfoCard.Value;
+            UiMods.ContributePanelPatches.Enabled = Settings.FixContributePanel.Value;
 
             RuntimeStatus.DataDir = PluginPaths.BaseDir;
             // 兜底扫描默认关闭（0）：补丁路径已覆盖绝大多数文本，周期性全内存枚举

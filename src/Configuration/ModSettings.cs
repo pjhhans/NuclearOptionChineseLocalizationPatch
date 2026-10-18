@@ -17,6 +17,7 @@ namespace NuclearOptionChineseLocalizationPatch.Configuration
         internal readonly ConfigEntry<float> ScanIntervalSeconds;
         internal readonly ConfigEntry<bool> WidenWeaponDropdown;
         internal readonly ConfigEntry<bool> FixWeaponInfoCard;
+        internal readonly ConfigEntry<bool> FixContributePanel;
 
         internal ModSettings(ConfigFile config)
         {
@@ -64,6 +65,12 @@ namespace NuclearOptionChineseLocalizationPatch.Configuration
                 "基地武器信息卡几何稳定：切换武器时描述与参数行数不同会导致参数漂移，"
                 + "开启后按首次布局固定描述与六个统计槽的位置和尺寸，切换武器时参数不再移动。"
                 + "描述过长时保持原高度（超出部分可能不显示）。");
+
+            FixContributePanel = config.Bind(
+                "UI", "FixContributePanel", true,
+                "捐款面板选择车队后金额不刷新（游戏 bug）：面板把「总价值 / 剩余资金」的刷新挂在内部状态"
+                + "contributionType（车辆模式）上，而它在部分路径下会被重置，于是点选新车队后仍显示上一个车队的"
+                + "价格、剩余资金也不扣减（实际扣款正常）。开启后在选择车队时把该状态修正回车辆模式。");
         }
     }
 }
