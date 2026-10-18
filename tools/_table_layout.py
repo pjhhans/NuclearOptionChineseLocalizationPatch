@@ -103,6 +103,8 @@ SCOPE_GROUPS = {
         "factionName", "h1", "h3", "load-message-text", "save info Text (TMP)",
         "selectedAction", "status", "subtext", "text-body", "visiblecounttext",
         "confirm Text (TMP)", "confirmLeaveText",
+        # 2026-10-19 补录：Aryx 机型（F-22E / F-99）实机 missing.json 实发
+        "Status",
     ],
     "units": [
         "AircraftName", "AircraftRank", "CounterMeasureName", "countermeasureName",
@@ -149,6 +151,8 @@ SCOPE_GROUPS = {
         # 2026-10-04 补录：MFD/落点指示器一屏的短标签（实机 missing.json 实发）
         "System Master Text", "Flight Assist Text", "angle_error", "lateral_error",
         "clutch_distance", "WepIndex_FWD", "WepIndex_REAR", "WepIndex_CENTRE",
+        # 2026-10-19 补录：Aryx 机型（F-22E / F-99）仪表与无线电面板
+        "AOA LIMITER", "LeftEngineStatus", "PropGaugeTitle", "Radio_04",
     ],
     "world": [
         "AirbaseLabel", "AirbaseMapIcon", "AirbaseName", "AirbaseWarheads",
