@@ -27,6 +27,12 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
     /// 被重置成 0/1，而车队行仍然可点，就会出现「显示不动、扣款正常」的错位 —— 正是实测截图里的状态
     /// （总价值仍是上一个车队的 -$9.96m，剩余资金等于当前资金）。</para>
     ///
+    /// <para><b>实测复现（0.34.2 实机探针）</b>：面板<b>首次</b>打开时页签会自动走一遍
+    /// <c>SetContributeVehicles</c>（type=2），第一次点行一切正常；<b>再次</b>打开时
+    /// <c>OnEnable → ResetValues</c> 把 type 打回 0，而页签已在选中态、不会重发
+    /// <c>onValueChanged</c>，于是 <c>SetContributeVehicles</c> 不再被调用 —— 此时点行就是
+    /// type=0 进 <c>CheckValues</c>，总价值不动、剩余资金不减。这就是"第一次好、之后坏"的来源。</para>
+    ///
     /// <para><b>对策</b>：<c>SelectConvoy</c> 前置把 <c>contributionType</c> 修正为 2。
     /// 随后的 <c>CheckValues</c> 就会走进车辆分支，总价值与剩余资金一次算对。
     /// 这是纯状态修正，不改任何算法；类型已经是 2 时零改动（一次字段读取即返回）。</para>
@@ -86,18 +92,26 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
 
             try
             {
+                // 字段类型是枚举 ContributionType（{ None, Funds, Vehicles }，底层 int），
+                // 取值必须走 Convert.ToInt32：装箱后的枚举值 `is int` 恒为 false，
+                // 用过 `is int` 判断会让「已经是车辆模式」也照改一遍，日志还会误报成需要修正。
                 object current = _typeField.GetValue(__instance);
-                if (current is int mode && mode == VehicleMode) return;
+                int mode;
+                try { mode = Convert.ToInt32(current); }
+                catch { mode = -1; }
 
-                _typeField.SetValue(__instance, VehicleMode);
+                if (mode == VehicleMode) return;
 
-                // 只在第一次修正时留一行日志：这是诊断用证据，不是每点必刷的噪声。
+                _typeField.SetValue(
+                    __instance, Enum.ToObject(_typeField.FieldType, VehicleMode));
+
+                // 只在第一次真正修正时留一行日志：这是诊断用证据，不是每点必刷的噪声。
                 if (!_reported)
                 {
                     _reported = true;
                     Diagnostics.Log.Info(
-                        "[捐款面板] 选择车队时贡献类型为 " + current + "（应为 " + VehicleMode
-                        + "），已修正：总价值与剩余资金将随选择刷新。");
+                        "[捐款面板] 选择车队时贡献类型为 " + mode + "（None=0 / Funds=1 / Vehicles=2），"
+                        + "已修正为 " + VehicleMode + "：总价值与剩余资金将随选择刷新。");
                 }
             }
             catch (Exception ex)
