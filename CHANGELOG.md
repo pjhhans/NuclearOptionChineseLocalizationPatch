@@ -18,7 +18,10 @@
   `contributionType == 2`（车辆模式）上，而 `SelectConvoy` 只写 `selectedConvoy`、不设该状态；
   一旦它被 `ResetValues` / `CancelContribution` 重置，点选新车队就会出现「绿框走了、总价值仍是上一个车队的
   数字、剩余资金也不扣减」，而 `PurchaseConvoy` 只读 `selectedConvoy`，所以实扣金额始终正常。
-  新增 `UiMods/ContributePanelPatches.cs`：在 `SelectConvoy` 前置把状态修正回 2，显示与实际一致。
+  **实机探针确认的触发路径**：面板首次打开时页签会自动调用一次 `SetContributeVehicles`（状态=2），
+  所以第一次点行是对的；关掉再打开时 `OnEnable → ResetValues` 把状态打回 0，页签已在选中态不会再发
+  `onValueChanged`，于是「再次打开后点行」必现。新增 `UiMods/ContributePanelPatches.cs`：
+  在 `SelectConvoy` 前置把状态修正回 2，显示与实际一致。
   配置项 `UI.FixContributePanel`（默认 `true`）。
 
 ---
