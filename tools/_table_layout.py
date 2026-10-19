@@ -105,6 +105,8 @@ SCOPE_GROUPS = {
         "confirm Text (TMP)", "confirmLeaveText",
         # 2026-10-19 补录：Aryx 机型（F-22E / F-99）实机 missing.json 实发
         "Status",
+        # 2026-10-20 补录：OritasySS 电台面板（站名按 12 字符截断后送进来）
+        "tx",
     ],
     "units": [
         "AircraftName", "AircraftRank", "CounterMeasureName", "countermeasureName",
