@@ -86,6 +86,7 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
             public float ParamShift; // 参数块整体平移量（世界 px，负=向左），供 FitDescription 修正
             public bool NoWeapon;    // 无武器模式：只钉描述（居中全宽）
             public float FittedRightContent = -1f; // 上次描述让位所依据的右格内容宽（变更才重算）
+            public float LastFitTime = -999f;      // 上次描述重算的 unscaledTime（配冷却用）
 
             // —— 描述滚动视图：钉死矩形的作用对象从 desc 移交 Viewport ——
             public RectTransform Viewport;   // 视口（钉死矩形 + RectMask2D 裁剪）
@@ -174,7 +175,15 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
                 if (_pinnedInstances.Count > 32)
                 {
                     _pinnedInstances.RemoveWhere(x => x != id);
-                    _instStates.Remove(id);
+                    // 只丢弃「已被挤出集合」的实例状态。旧版这里写的是 _instStates.Remove(id)，
+                    // 删的正是当前实例 —— 当前实例仍留在 _pinnedInstances 里，于是后续每帧走
+                    // 「已钉但状态缺失 → return」，卡片再也拿不到几何（且状态与钉死集合不一致）。
+                    var dropped = new List<int>();
+                    foreach (int k in _instStates.Keys)
+                        if (!_pinnedInstances.Contains(k))
+                            dropped.Add(k);
+                    foreach (int k in dropped)
+                        _instStates.Remove(k);
                     // 清理已消亡实例的表格几何（菜单 Clone 销毁后键残留）
                     var stale = new List<int>();
                     foreach (int k in WeaponInfoCardTable.Geom.Keys)
@@ -252,13 +261,22 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
                 }
 
                 // 右格内容宽变化（极端数值如 15000000kg）→ 描述让位重算；正常数值不动
+                // 死区 + 冷却：右格内容宽在 TMP 重排过程中会抖动（同一张卡连续几帧读到
+                // 144/155/166），旧版用 != 比较 ⇒ 每帧都重算 → 改宽度 → TMP 重排 →
+                // 下一帧又读到新值，形成自激循环。实测日志里描述宽在 572→583→594 间反复，
+                // 帧率被拖到个位数（表现为「开卡即卡死」）。故：变化超过阈值且距上次
+                // 重算超过冷却时间才动手。
                 if (desc != null
-                    && WeaponInfoCardTable.Geom.TryGetValue(id, out TableGeom tgx)
-                    && tgx.RightContent != st.FittedRightContent)
+                    && WeaponInfoCardTable.Geom.TryGetValue(id, out TableGeom tgx))
                 {
-                    st.FittedRightContent = tgx.RightContent;
-                    st.ScrollOffset = 0f; // 换武器回到顶部
-                    FitDescription(id, desc);
+                    float dRc = Mathf.Abs(tgx.RightContent - st.FittedRightContent);
+                    bool never = st.FittedRightContent < 0f;
+                    if ((never || dRc > RightContentEpsilon)
+                        && Time.unscaledTime - st.LastFitTime >= FitCooldown)
+                    {
+                        st.ScrollOffset = 0f; // 换武器回到顶部
+                        FitDescription(id, desc);
+                    }
                 }
                 // 宽度漂移巡检：钉值与实际矩形不一致 = 渲染期有其它机制在改宽度（留证）
                 if (pinRt != null && st.Pins.TryGetValue("description", out RectPin dpw)
@@ -706,6 +724,12 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
             float newWidth = Mathf.Max(160f, (rightLimit - targetLeft) / scale);
             st.Pins["description"] = new RectPin(dpin.X + deltaLocal, dpin.Y, newWidth, dpin.H);
 
+            // 记录本次重算依据的右格内容宽与时间：逐帧巡检据此判定「是否需要再算」，
+            // 配合死区/冷却避免自激循环（详见调用处的说明）。
+            if (hasGeom)
+                st.FittedRightContent = tg.RightContent;
+            st.LastFitTime = Time.unscaledTime;
+
             Diagnostics.Log.Info(string.Format(
                 "[信息卡·表格] 描述适配：{0}；内容右缘 {1:F0}（tg3 {2:F0}×cellScale {3:F2}），左缘 {4:F0}→{5:F0}（间距 {6:F0}，右移 {7:F0}），宽 {8:F0}→{9:F0}",
                 boundaryLog ?? "无右侧面板", contentRight,
@@ -717,6 +741,12 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
 
         /// <summary>参数内容右缘与描述左缘的固定间距（世界 px，不随武器/缩放浮动）。</summary>
         private const float DescGap = 26f;
+
+        /// <summary>右格内容宽的重算死区（px）。TMP 重排过程中的抖动多在此之内。</summary>
+        private const float RightContentEpsilon = 2f;
+
+        /// <summary>同一实例描述重算的最小间隔（秒），防止逐帧自激。</summary>
+        private const float FitCooldown = 0.25f;
 
         /// <summary>描述右移比例：屏幕宽 × 此比例（用户裁决 2~4%，取中 3%）。</summary>
         private const float DescShiftRatio = 0.03f;
