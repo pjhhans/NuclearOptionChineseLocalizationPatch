@@ -25,6 +25,40 @@
   后续每帧走到「已钉但状态缺失 → 直接 return」，卡片再也拿不到几何。
   改为只丢弃被挤出集合的实例状态。
 
+### 修复【数据】
+- **击杀播报整条不翻**。`exclusions.scopes` 里登记了 `KillFeed`，而 `IsExcluded` 位于
+  翻译流水线**最前面**——命中即原样返回，连裸键都不查，也**不记入漏译清单**，
+  于是左上角战报 100% 保持英文且在全流程里毫无痕迹。
+  该 scope 已移除；播报里的单位名本就是词表键，噪声远小于预期。
+- **补三个从未登记过的动词**。`KillTypeExtensions.GetVerb` 的取值：
+
+  | 有击杀者 | 无击杀者 |
+  |---|---|
+  | shot down / destroyed / demolished / intercepted / sank | crashed / **was destroyed** / **collapsed** / "" / sank |
+
+  加粗三项从建库起就没进过词表（`sank` 只靠后缀片段 `<< sank` 覆盖了无击杀者的句式），
+  补为「沉没了 / 被摧毁了 / 倒塌了」。
+- **误伤播报前缀不翻**。`TeamkilledText` 与 `KillFeed` 是同一个坑：scope 排除挡住了
+  `teamkillText.text = "Teamkilled by " + 玩家名`，使既有前缀片段 `>>Teamkilled by ` 永久失效。
+  该 scope 已移除，现输出「被以下玩家误杀 玩家名」。
+  已知限制：玩家昵称本身是中文时整行含汉字，入口守卫会跳过（前缀仍为英文）。
+
+> 这三处的形状是同一个教训：**scope 排除的代价是「该对象下一切文本永久不翻且不可见」**，
+> 比普通漏译难查得多。加之前先确认该 GameObject 名只服务于目标场景。
+
+### 数据
+- 二轮实机累积漏译 4 条（M12 Jackknife / HLT-CRAM / MSV MLRS 三条单位描述 + Super 530F）。
+- 排除 `Super`（`AIM-9P-4 Super` 的型号后缀）与 `OAS`（`[OAS]` 标签缩写）两个专有名词。
+- **百科里的舰船与武器**：`[Item Label]` 48 条 + `[Label]` 1 条迁为裸键（译文早已存在，
+  只是锁在单一作用域，百科标题槽位查不到），补 9 条 mod 单位/武器描述、3 个武器绰号
+  （`R-100N 天顶` / `HSM-N 落日`；`SLND-9 (20kt)` 保持原样，与 `GPO-N (1.5kt)` 同口径）。
+- **mod 资产全量补齐 49 条**：遍历 `BepInEx/plugins` 下所有 dll 的内嵌 UnityFS
+  （`UnityFS\0` 切段 → 解包 → `unitName` / `weaponName` / `shortName` / `description`），
+  与词表比对后一次补齐。含 `203mm 舰炮` `130mm 轨道炮` `23mm 近防炮` `2000kg 高爆战斗部`
+  `TNK 副油箱` `JMMR 干扰` `斯拉姆-ER` 等；纯型号名 18 条登记为原样。
+  另修正 `Warhead` 与 `WARHEAD` 的大小写重复（统一为「战斗部」，与 `Warhead Yield:` 一致）。
+- 词表 4610 → **4677** 条。
+
 ## [1.7.2] — 2026-10-28
 
 ### 适配【代码无需改动】
