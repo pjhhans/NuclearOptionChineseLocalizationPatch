@@ -15,7 +15,11 @@
     "sendCount",
     "RenderThread",
     "NOXContactLabel",
-    "NOXFriendName"
+    "NOXFriendName",
+    "name text",
+    "mission text",
+    "KillFeed",
+    "TeamkilledText"
   ],
   "texts": [
     "lol",
@@ -85,7 +89,15 @@
     "SAMTrailer1",
     "According to all known laws of aviation and annoying people on the subreddit, there is no way that an MC-260 Chimera should be able to fly. Its little wings are far too small to get its fat little body off of the ground. The Chimera of course, flies anyway, because Aryx doesn't care what aerodynamics thinks.",
     "HLT-M_4",
-    "null"
+    "null",
+    "A long username",
+    "#1 Username",
+    "LongPlayerNameLongPlayerName",
+    "\\ue984\\ue986",
+    "\\ue5dd",
+    "\\ue31b",
+    "COIN_2",
+    "GS25"
   ],
   "terms": [
     "TrackIR",
