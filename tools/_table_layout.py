@@ -59,7 +59,7 @@ SCOPES_DIRNAME = "scopes"
 
 # 与 C# 侧 ExclusionRules.StripScopePrefix 完全一致：`[` + 1~40 字符 + `]`。
 # 宽松一点会把正文里的方括号误当作用域，严格一点会让长作用域名漏掉。
-SCOPE_RE = re.compile(r"^\[[^\]]{1,40}\]")
+SCOPE_RE = re.compile(r"^\[(?=[^\]]*[A-Za-z])[^\]]{2,40}\]")
 
 KIND_TEMPLATE = "template"
 KIND_FRAGMENT = "fragment"
@@ -107,6 +107,16 @@ SCOPE_GROUPS = {
         "Status",
         # 2026-10-20 补录：OritasySS 电台面板（站名按 12 字符截断后送进来）
         "tx",
+    ],
+    # 第三方 mod（BoscaliSummer）的独立作用域。
+    # 插件给 mod 自建 UI 对象的作用域名加了 `BS:` 前缀（见 PatchHelpers.ScopeOf），
+    # 目的是隔离「同一串英文在 mod 与本体含义不同」的词 —— 例如 PORT 在本体是港口、
+    # 在 mod 是左舷；FRONT 在本体是机身前部、在 mod 是战线。
+    # mod 的 GameObject 名极通用（Label / Title / Value / Text / Caption / Name / Word），
+    # 所以这里按「BS: + 通用名」成组登记。
+    "bs": [
+        "BS:Caption", "BS:CheckMark", "BS:Label", "BS:Name", "BS:Text",
+        "BS:Title", "BS:Value", "BS:Word",
     ],
     "units": [
         "AircraftName", "AircraftRank", "CounterMeasureName", "countermeasureName",

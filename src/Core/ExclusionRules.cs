@@ -244,7 +244,26 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             if (string.IsNullOrEmpty(text) || text[0] != '[') return false;
             int close = text.IndexOf(']');
             if (close <= 0 || close > 41) return false;
-            scope = text.Substring(1, close - 1);
+
+            string inner = text.Substring(1, close - 1);
+
+            // ★ 作用域名必须是「标识符样式」：至少 2 个字符，且含至少一个字母。
+            //   否则游戏原文里的按键提示会被误判成作用域词条 —— 它们与 [Scope]原文 形状完全一样：
+            //   "[1] Fronts: status, blocker, readiness…"、"[2] Click a perk to arm it…"、
+            //   "[1-8]  SELECT AIRCRAFT"、"[R]  ACCEPT DEFEAT"。
+            //   一旦误判，这些键会被分流进 _scoped["1"]，通用表里再也查不到，
+            //   而运行时的作用域是 GameObject 名（永远不会是 "1"），于是**永久翻不出来**，
+            //   且漏译清单里也不会出现（连查表的机会都没有）。
+            if (inner.Length < 2) return false;
+            bool hasLetter = false;
+            for (int i = 0; i < inner.Length; i++)
+            {
+                char c = inner[i];
+                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) { hasLetter = true; break; }
+            }
+            if (!hasLetter) return false;
+
+            scope = inner;
             rest = text.Substring(close + 1);
             return scope.Length > 0;
         }

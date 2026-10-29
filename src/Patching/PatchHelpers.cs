@@ -79,7 +79,67 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             // 先做一次字符速判，绝大多数名字不以 ')' 结尾，省掉正则。
             if (name[name.Length - 1] == ')') name = UnityDuplicateSuffix.Replace(name, string.Empty);
-            return name.Length == 0 ? "Unknown" : name;
+            if (name.Length == 0) return "Unknown";
+
+            // ★ 第三方 mod 的 UI 对象名极其通用（Title / Value / Label / Text / Caption …），
+            //   与游戏本体的作用域名**逐字重合**：本体有 [Label] 112 条、[Title] 63 条、
+            //   [Name] 45 条、[Text] 35 条。不隔离的话，mod 的 "Label" 会直接查本体的
+            //   [Label] 分表，命中即串味（同一串英文在两个界面含义不同，译文张冠李戴）。
+            //   判据取「祖先链上存在 Boscali 开头的节点」：mod 的根是 BoscaliSummer.Core，
+            //   自带画布叫 "Boscali / Interaction"、"Boscali / Chatter"，名字空间不会与本体相撞。
+            //   mod 文本因此得到 BS: 前缀，与本体彻底分表。
+            if (ModScopeEnabled && IsModUi(comp.transform))
+            {
+                int room = 40 - ModScopePrefix.Length;   // 作用域名上限 40（见 ScopePrefixMax）
+                if (name.Length > room) name = name.Substring(0, room);
+                return ModScopePrefix + name;
+            }
+            return name;
+        }
+
+        /// <summary>第三方 mod 的 UI 作用域前缀。空串表示不隔离（回退到旧行为）。</summary>
+        private const string ModScopePrefix = "BS:";
+
+        /// <summary>mod 是否在用独立作用域。默认开；装了 mod 才有意义，没装时 IsModUi 恒 false。</summary>
+        internal static bool ModScopeEnabled { get; set; } = true;
+
+        /// <summary>
+        /// 祖先链上是否有 mod 自己的节点。结果按 Transform 缓存 ——
+        /// 本方法在每次潜在翻译时都会被调用（HUD 上每秒上万次），
+        /// 向上遍历虽有缓存，仍要避免重复走父链。
+        /// </summary>
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Transform, object> ModUiCache =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<Transform, object>();
+        private static readonly object Yes = new object();
+        private static readonly object No = new object();
+
+        private static bool IsModUi(Transform t)
+        {
+            if (t == null) return false;
+            // 「不是 mod」也要缓存：本体 HUD 的文本每秒被查上万次，
+            // 每次都向上走 12 层父链是不可接受的。缓存后每个 Transform 一生只走一次。
+            object cached;
+            if (ModUiCache.TryGetValue(t, out cached)) return ReferenceEquals(cached, Yes);
+
+            bool mod = false;
+            Transform cur = t;
+            for (int depth = 0; depth < 12 && cur != null; depth++)
+            {
+                string n = cur.name;
+                // 只看名字前缀：BoscaliSummer.Core / Boscali / xxx / BoscaliXxx
+                if (n != null && n.Length >= 7 && n.StartsWith("Boscali", StringComparison.Ordinal))
+                {
+                    mod = true;
+                    break;
+                }
+                cur = cur.parent;
+            }
+
+            // 目标框架是 .NET Framework（Mono），ConditionalWeakTable 没有 AddOrUpdate，
+            // 用 Remove + Add 代替；都在主线程，无并发问题。
+            ModUiCache.Remove(t);
+            ModUiCache.Add(t, mod ? Yes : No);
+            return mod;
         }
 
         /// <summary>Unity 的重名后缀，形如 <c>" (3)"</c>。</summary>
