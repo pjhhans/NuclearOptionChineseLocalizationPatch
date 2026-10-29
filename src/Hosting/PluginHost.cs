@@ -43,7 +43,6 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
         /// <summary>空闲退避的上限：间隔最多放大到基础的 2³ = 8 倍。</summary>
         private const int MaxBackoffShift = 3;
 
-
         private float _nextScanTime;
 
         /// <summary>下次「空白文本巡检」的时刻（独立于兜底扫描开关，限次运行）。</summary>
