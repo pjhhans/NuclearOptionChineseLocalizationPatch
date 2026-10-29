@@ -59,6 +59,7 @@ SCOPES_DIRNAME = "scopes"
 
 # 与 C# 侧 ExclusionRules.StripScopePrefix 完全一致：`[` + 1~40 字符 + `]`。
 # 宽松一点会把正文里的方括号误当作用域，严格一点会让长作用域名漏掉。
+BS_SCOPE_PREFIX = "BS:"
 SCOPE_RE = re.compile(r"^\[(?=[^\]]*[A-Za-z])[^\]]{2,40}\]")
 
 KIND_TEMPLATE = "template"
@@ -223,6 +224,11 @@ def scope_of(key):
 
 
 def category_of_scope(scope):
+    # 第三方 mod 的作用域一律进 scopes/bs.json —— 名字来自代码里的 GameObject 名，
+    # 会随作者版本变化（Channel / Label / Title…），逐个登记进 SCOPE_GROUPS 追不上，
+    # 这里按前缀统一归类。
+    if scope.startswith(BS_SCOPE_PREFIX):
+        return "bs"
     return SCOPE_CATEGORY.get(scope, FALLBACK_CATEGORY)
 
 
