@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
@@ -202,13 +202,29 @@ namespace NuclearOptionChineseLocalizationPatch
         private static readonly System.Collections.Generic.HashSet<int> _blankLogged =
             new System.Collections.Generic.HashSet<int>();
         private static int _blankBudget = 40;
+
+        /// <summary>已经尝试过「重建字体材质引用」的对象（每个只修一次，失败不重试）。</summary>
+        private static readonly System.Collections.Generic.HashSet<int> _repairTried =
+            new System.Collections.Generic.HashSet<int>();
         private static int _blankRuns;
         private const int BlankRuns = 20;
 
-        /// <summary>空白巡检是否还需要跑（与「兜底扫描」开关无关，限 6 次）。</summary>
+        /// <summary>空白巡检跑过几次（前 <see cref="BlankRuns"/> 次用快节奏）。</summary>
+        internal static int BlankRunsDone => _blankRuns;
+
+        /// <summary>
+        /// 巡检是否还要继续。
+        ///
+        /// <para><b>为什么不再「跑够次数就彻底停」。</b>这轮巡检已经不只是诊断，它还负责
+        /// **自愈**：把「有中文却一个字符都没画出来」的文本对象重建一次字体材质引用。
+        /// 而这类对象往往出现在用户后来才打开的菜单里（环形菜单 / WMC 控制台 / 事件台），
+        /// 40 秒窗口早就过了 —— 停掉巡检等于把自愈能力一起停掉。
+        /// 所以改成：前 20 次 2 秒一次（覆盖进场景那阵），之后 10 秒一次长期低频跑。
+        /// 代价是每 10 秒一次 FindObjectsOfTypeAll（数百个组件，≈0.3 ms），可忽略。</para>
+        /// </summary>
         internal static bool BlankReportPending
         {
-            get { return _blankRuns < BlankRuns && _blankBudget > 0; }
+            get { return true; }
         }
 
         /// <summary>
@@ -231,12 +247,13 @@ namespace NuclearOptionChineseLocalizationPatch
                 Log.Debug("空白巡检失败：" + ex.Message);
             }
 
-            if (!BlankReportPending)
+            // 快节奏窗口结束：报一次总数，之后转入 10 秒一次的长期自愈（不再刷日志）。
+            if (_blankRuns == BlankRuns)
             {
                 int found = 40 - _blankBudget;
                 Log.Info(found > 0
-                    ? $"[空白文本] 巡检结束：{found} 个组件有中文却没渲染出宽度（明细见上）。"
-                    : "[空白文本] 巡检结束：没有发现「有中文但渲染为空」的组件。");
+                    ? $"[空白文本] 快检结束：{found} 个组件有中文却没渲染出宽度（明细见上），之后转入 10 秒一次的自愈巡检。"
+                    : "[空白文本] 快检结束：没有发现「有中文但渲染为空」的组件，之后转入 10 秒一次的自愈巡检。");
             }
         }
 
@@ -255,20 +272,21 @@ namespace NuclearOptionChineseLocalizationPatch
         /// </summary>
         private static void ReportBlankText(TMP_Text t)
         {
-            if (_blankBudget <= 0 || t == null || !t.gameObject.activeInHierarchy) return;
-            // 属性变更待重建时 bounds 还是上一轮的旧值（或 0），此时判定会误报。
-            if (t.havePropertiesChanged) return;
+            if (t == null || !t.gameObject.activeInHierarchy) return;
 
             string s = t.text;
             if (string.IsNullOrEmpty(s) || s.Length > 200) return;
+            char firstCjk = FirstCjk(s);
+            if (firstCjk == '\0') return;
 
-            bool cjk = false;
-            for (int i = 0; i < s.Length; i++)
+            // 属性变更待重建时 bounds 还是上一轮的旧值（或 0）——
+            // 定时巡检里跳过它（避免误报），**按需巡检**里则强制重建后再量，
+            // 否则「刚 set_text 过、还没来得及生成网格」的组件永远量不到。
+            if (t.havePropertiesChanged)
             {
-                char ch = s[i];
-                if (ch >= 0x3400 && ch <= 0x9FFF) { cjk = true; break; }
+                if (!_forceInspect) return;
+                t.ForceMeshUpdate(true, true);
             }
-            if (!cjk) return;
 
             RectTransform rt = t.rectTransform;
             if (rt == null) return;
@@ -276,20 +294,191 @@ namespace NuclearOptionChineseLocalizationPatch
             Vector2 bounds = t.textBounds.size;
             if (w >= 2f && h >= 2f && bounds.x >= 1f) return;
 
-            if (!_blankLogged.Add(t.GetInstanceID())) return;
+            bool dumped = DumpText(t, s, firstCjk);
+            if (dumped) Log.Info("[空白文本] ↑ 有中文但没渲染出来（矩形或包围盒为 0）。");
+
+            // 定时巡检也自愈：只对「已经有中文、却什么都没画出来」的对象做一次
+            // （_repairTried 保证每个对象一生只试一次，修不好也不会每两秒重排一次）。
+            if (!_repairTried.Add(t.GetInstanceID())) return;
+            Vector2 before = t.textBounds.size;
+            RepairFontLinks(t);
+            t.SetAllDirty();
+            t.ForceMeshUpdate(true, true);
+            Vector2 after = t.textBounds.size;
+            if (dumped && after.x >= 1f)
+            {
+                Log.Info(string.Format("[空白文本]   自愈成功：bounds {0:F1}x{1:F1}（原 {2:F1}x{3:F1}）",
+                    after.x, after.y, before.x, before.y));
+            }
+        }
+
+        private static char FirstCjk(string s)
+        {
+            for (int i = 0; i < s.Length; i++)
+            {
+                char ch = s[i];
+                if (ch >= 0x3400 && ch <= 0x9FFF) return ch;
+            }
+            return '\0';
+        }
+
+        /// <summary>把一条中文文本的几何 + 字体证据打成两行日志；预算用尽返回 false。</summary>
+        private static bool DumpText(TMP_Text t, string s, char firstCjk)
+        {
+            if (_blankBudget <= 0) return false;
+            if (!_blankLogged.Add(t.GetInstanceID())) return false;
             _blankBudget--;
 
+            RectTransform rt = t.rectTransform;
+            Vector2 bounds = t.textBounds.size;
             var path = new System.Text.StringBuilder();
             Transform cur = rt;
-            for (int depth = 0; depth < 3 && cur != null; depth++)
+            for (int depth = 0; depth < 4 && cur != null; depth++)
             {
                 if (path.Length > 0) path.Append(" < ");
                 path.Append(cur.name);
                 cur = cur.parent;
             }
-            Log.Info(string.Format("[空白文本] rect {0:F0}x{1:F0} bounds {2:F1}x{3:F1} 路径 {4} 「{5}{6}」",
-                w, h, bounds.x, bounds.y, path,
-                s.Length > 16 ? s.Substring(0, 16) : s, s.Length > 16 ? "…" : ""));
+            Log.Info(string.Format("[空白文本] rect {0:F0}x{1:F0} @({2:F0},{3:F0}) bounds {4:F1}x{5:F1} 路径 {6} 「{7}{8}」",
+                rt.rect.width, rt.rect.height,
+                rt.anchoredPosition.x, rt.anchoredPosition.y,
+                bounds.x, bounds.y, path,
+                s.Length > 18 ? s.Substring(0, 18) : s, s.Length > 18 ? "…" : ""));
+
+            // 字体侧的证据：这一条到底是「字形没有」还是「排版把宽度吃掉了」。
+            // 只看汉字有没有、回退链挂没挂，就能一眼分开两类根因。
+            TMP_FontAsset fa = t.font;
+            int fb = (fa != null && fa.fallbackFontAssetTable != null) ? fa.fallbackFontAssetTable.Count : -1;
+            bool hasGlyph = fa != null && fa.HasCharacter(firstCjk);
+            Log.Info(string.Format("[空白文本]   字体 {0}（回退链 {1} 个，含「{2}」={3}） material={4} 溢出模式={5} 自动换行={6} 字号={7:F0}",
+                fa != null ? fa.name : "<null>", fb, firstCjk, hasGlyph ? "是" : "否",
+                t.fontSharedMaterial != null ? t.fontSharedMaterial.name : "<null>",
+                (int)t.overflowMode, t.enableWordWrapping, t.fontSize));
+            return true;
+        }
+
+        /// <summary>
+        /// 重建一个文本对象的**字体材质引用**（不换字体、不动文本内容）。
+        ///
+        /// <para><b>为什么需要它。</b>中文回退字体是插件在运行期挂进
+        /// <c>font.fallbackFontAssetTable</c> 的。TMP 在渲染某个字符时，
+        /// 如果它不在主字体里，会去回退表里找 —— 但找到之后要把它**当成第二个材质**
+        /// 加进该文本对象的 <c>m_sharedMaterials</c> 才会真的画出来。
+        /// 这一步发生在 <c>SetArraySizes</c> 期间；对「挂回退表之前就已经建好、
+        /// 且之后再也没有被 set_text 过」的对象，材质表可能一直只有主字体那一页。</para>
+        ///
+        /// <para>实机表现就是本文件顶部那段现象：<b>同一个对象，拉丁字母正常、中文整条消失</b>
+        /// （连省略号都没有），而字体诊断里每个汉字都是「能加进图集」。
+        /// 重新赋一次 <c>font</c> 会走 <c>SetFontAsset</c> → 重建材质表，是最轻的强制刷新。</para>
+        /// </summary>
+        private static void RepairFontLinks(TMP_Text t)
+        {
+            try
+            {
+                TMP_FontAsset f = t.font;
+                if (f == null) return;
+                t.font = null;
+                t.font = f;
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("重建字体引用失败：" + ex.Message);
+            }
+        }
+
+        /// <summary>按需巡检期间强制重建网格（定时巡检里不这么做，免得每两秒全场景重排）。</summary>
+        private static bool _forceInspect;
+
+        /// <summary>
+        /// 立刻巡检「当前画面上有中文却渲染不出来」的组件（F11 按钮触发）。
+        ///
+        /// <para><b>为什么需要按需触发。</b>定时巡检只在进场景后的前 40 秒跑，
+        /// 而这类故障往往只在某个菜单/面板被打开时才成立（环形菜单、WMC 控制台…）。
+        /// 用户开着那个界面按一下按钮，日志里就会拿到矩形、包围盒、字体名、
+        /// 回退链长度、字形有无 —— 一次到位，不用靠猜。</para>
+        ///
+        /// <para><b>顺带把「画出来了但被裁掉」这一类也捞出来。</b>只判 bounds 为 0 会漏掉
+        /// 「文本画在矩形外面」的情况（第三方 mod 按英文高度排版，换中文后行高不够，
+        /// 标签被顶到行外被父级 mask 裁掉）。所以按需模式会把**矩形与包围盒不重叠**
+        /// 的中文组件也列出来，并带上 anchoredPosition 便于对账。</para>
+        /// </summary>
+        internal static void InspectBlankNow()
+        {
+            _blankRuns = 0;
+            _blankBudget = 120;
+            _blankLogged.Clear();
+            _forceInspect = true;
+            int blank = 0, outside = 0, repaired = 0;
+            try
+            {
+                var all = UnityEngine.Resources.FindObjectsOfTypeAll<TMP_Text>();
+                for (int i = 0; i < all.Length; i++)
+                {
+                    TMP_Text t = all[i];
+                    if (t == null || !t.gameObject.activeInHierarchy) continue;
+                    string s = t.text;
+                    if (string.IsNullOrEmpty(s) || s.Length > 200) continue;
+                    char cjk = FirstCjk(s);
+                    if (cjk == '\0') continue;
+                    if (t.havePropertiesChanged) t.ForceMeshUpdate(true, true);
+
+                    RectTransform rt = t.rectTransform;
+                    if (rt == null) continue;
+                    float w = rt.rect.width, h = rt.rect.height;
+                    Vector2 b = t.textBounds.size;
+
+                    if (w >= 2f && h >= 2f && b.x >= 1f)
+                    {
+                        // 画出来了：只有当包围盒明显**跑出**自身矩形时才可疑
+                        // （高度不足被顶出、或宽度为 0 却画了字）。
+                        bool outOfBox = b.y > h * 1.8f + 2f || b.x > w * 1.6f + 4f;
+                        if (!outOfBox) continue;
+                        if (!DumpText(t, s, cjk)) break;
+                        outside++;
+                        continue;
+                    }
+
+                    if (!DumpText(t, s, cjk)) break;
+                    blank++;
+
+                    // —— 顺手修一次并前后对比：这就是「根因是不是材质引用没重建」的判定器。
+                    // 渲染侧的现象是「同一对象，拉丁字母正常、中文整条不见」，
+                    // 说明对象本身没坏、字形也在（日志里含「接」=是），
+                    // 缺的是**该对象材质/网格引用里没有中文回退那一页**
+                    // （回退表是插件运行期才挂上去的，早于挂表的对象不会自己重建）。
+                    // 重新赋一次 font 会走 SetFontAsset → 重建 m_sharedMaterials，
+                    // 再 SetAllDirty + ForceMeshUpdate 强制重排；两条都做完还不行，就不是这条路。
+                    Vector2 before = t.textBounds.size;
+                    RepairFontLinks(t);
+                    t.SetAllDirty();
+                    t.ForceMeshUpdate(true, true);
+                    Vector2 after = t.textBounds.size;
+                    if (after.x >= 1f)
+                    {
+                        repaired++;
+                        Log.Info(string.Format("[空白文本]   修复后 bounds {0:F1}x{1:F1}（原 {2:F1}x{3:F1}）—— 重建材质引用即可恢复",
+                            after.x, after.y, before.x, before.y));
+                    }
+                    else
+                    {
+                        Log.Info(string.Format("[空白文本]   重建材质引用后仍为 {0:F1}x{1:F1} —— 不是材质引用问题",
+                            after.x, after.y));
+                    }
+                }
+
+                if (blank + outside == 0)
+                {
+                    Log.Info("[空白文本] 按需巡检：当前画面上没有「有中文却不显示/被裁」的组件。");
+                }
+                else
+                {
+                    Log.Info($"[空白文本] 按需巡检：空白 {blank} 个（其中 {repaired} 个重建材质引用后恢复）/ 疑似被裁 {outside} 个（明细见上）。");
+                }
+            }
+            finally
+            {
+                _forceInspect = false;
+            }
         }
 
         internal static int ScanScene()

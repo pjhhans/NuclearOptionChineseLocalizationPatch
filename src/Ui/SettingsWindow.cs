@@ -180,6 +180,11 @@ namespace NuclearOptionChineseLocalizationPatch.Ui
                 Log.Info("漏译记录已清空并重写。");
             }
 
+            if (GUILayout.Button("巡检空白文本（当前画面）", GUILayout.Height(24f)))
+            {
+                LocalizationPlugin.InspectBlankNow();
+            }
+
             GUILayout.EndHorizontal();
         }
 

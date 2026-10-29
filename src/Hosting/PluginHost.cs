@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using NuclearOptionChineseLocalizationPatch.Diagnostics;
 using NuclearOptionChineseLocalizationPatch.Ui;
 using UnityEngine;
@@ -169,10 +169,11 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
             // —— 一次性空白文本巡检：与「兜底扫描」开关无关 ——
             // 实机里兜底扫描默认是关的，把它挂在 HandleScan 的开关之后等于永不执行。
             // 这里放开关之前，限次数（20 次 × 2 秒 = 40 秒窗口），跑完自动停。
-            if (LocalizationPlugin.BlankReportPending
-                && Time.realtimeSinceStartup >= _nextBlankCheck)
+            if (Time.realtimeSinceStartup >= _nextBlankCheck)
             {
-                _nextBlankCheck = Time.realtimeSinceStartup + 2f;
+                // 前 20 次 2 秒一次（覆盖进场景那阵），之后 10 秒一次长期低频自愈。
+                _nextBlankCheck = Time.realtimeSinceStartup
+                    + (LocalizationPlugin.BlankRunsDone < 20 ? 2f : 10f);
                 LocalizationPlugin.RunBlankReport();
             }
 
