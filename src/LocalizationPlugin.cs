@@ -583,12 +583,31 @@ namespace NuclearOptionChineseLocalizationPatch
             int budget = 40;
             for (int k = _pending.Count - 1; k >= 0 && budget > 0; k--)
             {
-                TMP_Text p = _pending[k];
-                _pending.RemoveAt(k);
+                Pending e = _pending[k];
                 budget--;
-                if (p == null) continue;
-                if (p.havePropertiesChanged) continue;   // TMP 还没重建；滚动通道会兜住
-                TryRepairIfStuck(p);
+
+                if (e.Text == null)
+                {
+                    _pending.RemoveAt(k);
+                    _pendingIds.Remove(e.Id);
+                    continue;
+                }
+
+                // TMP 还没重建（havePropertiesChanged 仍是 true）或对象还没激活时**不能下结论**：
+                // 此刻 characterCount 还是上一段文本留下的值。以前这里直接丢弃，
+                // 于是对象只能等滚动扫描（缓存 2 秒一刷 + 0.8 秒扫一轮）→ 用户看到的 1~2 秒延迟。
+                // 现在原地等，最多 12 帧（≈0.2 秒）。
+                if (e.Tries < 12 && (e.Text.havePropertiesChanged || !e.Text.gameObject.activeInHierarchy))
+                {
+                    e.Tries++;
+                    _pending[k] = e;
+                    continue;
+                }
+
+                _pending.RemoveAt(k);
+                _pendingIds.Remove(e.Id);   // ★ 必须摘掉：池化标签会复用同一个对象，
+                                            //   留着就再也登记不进来（这正是「第二次开菜单变慢」的原因）。
+                TryRepairIfStuck(e.Text);
             }
 
             TMP_Text[] all = _sweepCache;
@@ -629,9 +648,22 @@ namespace NuclearOptionChineseLocalizationPatch
             }
         }
 
-        /// <summary>待查对象（翻译刚写入时登记，见 <see cref="NotifyLocalized"/>）。</summary>
-        private static readonly System.Collections.Generic.List<TMP_Text> _pending =
-            new System.Collections.Generic.List<TMP_Text>();
+        /// <summary>待查对象：翻译刚写入时登记（见 <see cref="NotifyLocalized"/>）。</summary>
+        private struct Pending
+        {
+            public TMP_Text Text;
+            public int Id;
+            public int Tries;
+        }
+
+        private static readonly System.Collections.Generic.List<Pending> _pending =
+            new System.Collections.Generic.List<Pending>();
+
+        /// <summary>
+        /// 「当前正排在队里」的对象 ID —— <b>不是</b>「曾经登记过的对象 ID」。
+        /// 出队时必须一起移除，否则池化标签复用同一实例后永远登记不进来，
+        /// 只能退化到滚动扫描（实机表现为「界面要等一两秒才出字」）。
+        /// </summary>
         private static readonly System.Collections.Generic.HashSet<int> _pendingIds =
             new System.Collections.Generic.HashSet<int>();
 
@@ -640,15 +672,16 @@ namespace NuclearOptionChineseLocalizationPatch
         ///
         /// <para>为什么需要：TMP 的纵向溢出 + Ellipsis 会把整条中文清零（见
         /// <see cref="RepairStuck"/>），而这类对象往往在用户打开菜单时才出现，
-        /// 10 秒一次的巡检太慢、全量扫描的组件缓存也还没刷新到它们。
+        /// 全量扫描的组件缓存要 2 秒才刷一次，等不起。
         /// 这里只做一次 List 追加 + HashSet 去重，开销可忽略。</para>
         /// </summary>
         internal static void NotifyLocalized(TMP_Text t)
         {
             if (t == null) return;
-            if (_pendingIds.Count > 4000) _pendingIds.Clear();
-            if (!_pendingIds.Add(t.GetInstanceID())) return;
-            _pending.Add(t);
+            int id = t.GetInstanceID();
+            if (_pending.Count > 2000) return;          // 极端情况下的保险丝
+            if (!_pendingIds.Add(id)) return;
+            _pending.Add(new Pending { Text = t, Id = id, Tries = 0 });
         }
 
         /// <summary>按需巡检期间强制重建网格（定时巡检里不这么做，免得每两秒全场景重排）。</summary>
