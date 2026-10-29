@@ -1,0 +1,16 @@
+{
+  "[Ares] level:": "[Ares] 推平：",
+  "[Ares] pick action failed:": "[Ares] 选取操作失败：",
+  "[Ares] spawned": "[Ares] 已生成",
+  "[BoscaliSummer] CombatAdjust: a map/HUD member for track expiry is missing; expired contacts may keep a stale icon.": "[BoscaliSummer] 战斗调整：缺少用于轨迹过期的地图/HUD 成员；已过期目标可能残留旧图标。",
+  "[Chatter] ... and": "[Chatter] ……另有",
+  "[Chatter] clip decode failed:": "[Chatter] 音频片段解码失败：",
+  "[Chatter] clip load failed:": "[Chatter] 音频片段加载失败：",
+  "[Chatter] could not read the user packs:": "[Chatter] 无法读取用户语音包：",
+  "[Chatter] no pack has the event '": "[Chatter] 没有语音包包含事件“",
+  "[Chatter] voice pack": "[Chatter] 语音包",
+  "[Chatter] voice pack not found:": "[Chatter] 未找到语音包：",
+  "[Chatter] voice pack unavailable:": "[Chatter] 语音包不可用：",
+  "[Chatter] voice playback failed:": "[Chatter] 语音播放失败：",
+  "[Operations] 18 contract families; mod-drawn contract markers on the cockpit HUD and the tactical map plus the contract feed on the common HUD element; native rescue/repair/supply observations; acceptance required, 3 cards/2 active per faction, 24 reward units; experimental.": "[行动] 18 个合同族；模组绘制的合同标记显示在座舱 HUD 与战术地图上，合同信息流位于通用 HUD 元素上；原生救援/维修/补给观测；需接受，每阵营 3 张卡/2 个生效，24 个奖励单位；实验性。"
+}

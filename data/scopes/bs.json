@@ -1,0 +1,23 @@
+{
+  "[BS:Caption]POINTS": "点位",
+  "[BS:CheckMark]OK": "正常",
+  "[BS:Label]ART": "图案",
+  "[BS:Label]FRONT": "战线",
+  "[BS:Label]PLAY": "播放",
+  "[BS:Label]PORT": "左侧",
+  "[BS:Label]PUBLIC": "公共",
+  "[BS:Label]RANGE": "距离",
+  "[BS:Label]SWEEP": "扫荡",
+  "[BS:Name]FRONT": "战线",
+  "[BS:Name]RANGE": "距离",
+  "[BS:Name]SPACE": "太空",
+  "[BS:Text]PING": "标记",
+  "[BS:Title]BLOCK": "区块",
+  "[BS:Title]PUBLIC": "公共",
+  "[BS:Title]SPACE": "太空",
+  "[BS:Value]DOCK": "对接",
+  "[BS:Word]DOCK": "对接",
+  "[BS:Word]OK": "正常",
+  "[BS:Word]POINTS": "点位",
+  "[BS:Word]RANGE": "距离"
+}
