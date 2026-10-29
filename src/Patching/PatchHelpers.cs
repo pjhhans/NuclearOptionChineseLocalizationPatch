@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
@@ -235,6 +235,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                     Remember(consoleHit, original);
                     RewriteGuard.Track(comp, original, consoleHit);
                     Host.NotifyTranslationActivity();
+                    LocalizationPlugin.NotifyLocalized(comp as TMP_Text);
                     return true;
                 }
             }
@@ -248,6 +249,9 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             // 新内容真的翻出来了 —— 告诉兜底扫描「界面在变」，把空闲退避清零，
             // 并让下一轮扫描尽快跟上（有些文本绕过 setter，只有扫描才够得着）。
             Host.NotifyTranslationActivity();
+            // 翻译刚写进去就把对象登记下来：TMP 可能因为「行高不够 + Ellipsis」把整条中文清零，
+            // 下一帧的自愈通道会立刻把它救回来（详见 LocalizationPlugin.RepairStuck）。
+            LocalizationPlugin.NotifyLocalized(comp as TMP_Text);
             return true;
         }
 

@@ -125,6 +125,10 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
             // 否则「B/帧」这个视角会失真。
             PerfProbe.FrameTick(Time.realtimeSinceStartup);
             HandleHotkeys();
+            // 滚动自愈：每帧只查 40 个文本组件，几百毫秒覆盖全场景，
+            // 让「打开菜单才出现的中文整条不显示」在 1 秒内被救回来，
+            // 而不是等 10 秒一次的定时巡检。正常界面上早退开销为零（只在字符数为 0 时才往下走）。
+            LocalizationPlugin.ScanBlankSlice();
             HandleScan();
             LocalizationPlugin.MissLog?.FlushIfDue();
         }
@@ -171,9 +175,10 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
             // 这里放开关之前，限次数（20 次 × 2 秒 = 40 秒窗口），跑完自动停。
             if (Time.realtimeSinceStartup >= _nextBlankCheck)
             {
-                // 前 20 次 2 秒一次（覆盖进场景那阵），之后 10 秒一次长期低频自愈。
-                _nextBlankCheck = Time.realtimeSinceStartup
-                    + (LocalizationPlugin.BlankRunsDone < 20 ? 2f : 10f);
+                // 固定 2 秒：这一轮现在只负责「刷新文本组件缓存 + 补挂字体回退」，
+                // 真正的诊断报告在里面每 5 轮（≈10 秒）才做一次。
+                // 刷新快一点，滚动自愈才能尽快看到新打开菜单里的标签。
+                _nextBlankCheck = Time.realtimeSinceStartup + 2f;
                 LocalizationPlugin.RunBlankReport();
             }
 

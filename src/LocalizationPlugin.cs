@@ -203,10 +203,16 @@ namespace NuclearOptionChineseLocalizationPatch
             new System.Collections.Generic.HashSet<int>();
         private static int _blankBudget = 40;
 
-        /// <summary>已经尝试过「重建字体材质引用」的对象（每个只修一次，失败不重试）。</summary>
+        /// <summary>已经尝试修过、且修不回来的对象（避免每帧重复对同一个死对象做 ForceMeshUpdate）。</summary>
         private static readonly System.Collections.Generic.HashSet<int> _repairTried =
             new System.Collections.Generic.HashSet<int>();
         private static int _blankRuns;
+
+        /// <summary>上一次全量扫描拿到的文本组件（滚动自愈用，见 <see cref="ScanBlankSlice"/>）。</summary>
+        private static TMP_Text[] _sweepCache;
+
+        /// <summary>滚动游标。</summary>
+        private static int _sweepCursor;
         private const int BlankRuns = 20;
 
         /// <summary>空白巡检跑过几次（前 <see cref="BlankRuns"/> 次用快节奏）。</summary>
@@ -243,8 +249,16 @@ namespace NuclearOptionChineseLocalizationPatch
                 Resources.CjkFontProvider.Register();
 
                 var all = UnityEngine.Resources.FindObjectsOfTypeAll<TMP_Text>();
-                for (int i = 0; i < all.Length; i++)
-                    ReportBlankText(all[i]);
+                _sweepCache = all;
+                _sweepCursor = 0;
+
+                // 全量报告是诊断用（读文本、打日志、量包围盒），每 5 轮做一次就够了；
+                // 自愈本身走 ScanBlankSlice 的滚动通道，不依赖这里。
+                if (_blankRuns % 5 == 1)
+                {
+                    for (int i = 0; i < all.Length; i++)
+                        ReportBlankText(all[i]);
+                }
             }
             catch (Exception ex)
             {
@@ -304,18 +318,18 @@ namespace NuclearOptionChineseLocalizationPatch
             bool dumped = DumpText(t, s, firstCjk);
             if (dumped) Log.Info("[空白文本] ↑ 有中文但没渲染出来（矩形或包围盒为 0）。");
 
-            // 定时巡检也自愈：只对「已经有中文、却什么都没画出来」的对象做一次
-            // （_repairTried 保证每个对象一生只试一次，修不好也不会每两秒重排一次）。
-            if (!_repairTried.Add(t.GetInstanceID())) return;
-            Vector2 before = t.textBounds.size;
-            RepairFontLinks(t);
-            t.SetAllDirty();
-            t.ForceMeshUpdate(true, true);
-            Vector2 after = t.textBounds.size;
-            if (dumped && after.x >= 1f)
+            // 定时巡检也自愈。_repairTried 只记「修过一次但没救回来」的对象，
+            // 免得每两秒对同一具尸体再排一次版；能救回来的不进这个表。
+            string recipe = RepairStuck(t, s);
+            if (recipe != null)
             {
-                Log.Info(string.Format("[空白文本]   自愈成功：bounds {0:F1}x{1:F1}（原 {2:F1}x{3:F1}）",
-                    after.x, after.y, before.x, before.y));
+                Log.Info(string.Format("[空白文本]   自愈成功（{0}）：已画字符 {1}，bounds {2:F1}x{3:F1}",
+                    recipe, CharCountOf(t), t.textBounds.size.x, t.textBounds.size.y));
+            }
+            else if (dumped)
+            {
+                _repairTried.Add(t.GetInstanceID());
+                Log.Info("[空白文本]   四级修复全部无效 —— 这条留着，把日志给我。");
             }
         }
 
@@ -477,6 +491,166 @@ namespace NuclearOptionChineseLocalizationPatch
             }
         }
 
+        /// <summary>当前这个对象实际排出了几个字符（0 = 一个字都没生成）。</summary>
+        private static int CharCountOf(TMP_Text t)
+        {
+            var info = t != null ? t.textInfo : null;
+            return info != null ? info.characterCount : 0;
+        }
+
+        /// <summary>
+        /// 把「有中文、却一个字符都没生成」的文本对象救回来。返回成功的那一步名，全失败返回 <c>null</c>。
+        ///
+        /// <para><b>真因（TMP 源码坐实）。</b><c>GenerateTextMesh</c> 里处理**纵向**溢出时：</para>
+        /// <code>
+        /// case TextOverflowModes.Ellipsis:
+        ///     if (m_EllipsisInsertionCandidateStack.Count == 0)
+        ///     {
+        ///         i = -1;
+        ///         m_characterCount = 0;          // ← 整条文本被清零
+        ///         characterSubstitution.unicode = 3u;
+        ///     }
+        /// </code>
+        /// <para>也就是说：<b>文本行高超出文本框高度</b>、溢出模式是 <c>Ellipsis</c>、而单行禁换行的文本
+        /// 没有可回退的快照时，TMP 直接把字符数清成 0 —— 一个字都不画，连省略号都不画。
+        /// 中文回退字体的行高（ascent+descent）比 mod 排版时依据的拉丁字体高，
+        /// 行高按英文算好的文本框正好踩中这条，于是**同一行里拉丁串还在、中文整条消失**，
+        /// 而且 <c>textBounds</c> 返回未初始化的哨兵值（日志里的 <c>-4294967000</c>）。</para>
+        ///
+        /// <para><b>为什么是级联而不是一招。</b>这条分支是源码推出来的，实机上还可能叠加
+        /// 材质页、scale-static、解析状态几个次级原因。四级按「最可能 + 副作用最小」排序，
+        /// 命中即停并记下是哪一级，日志里就能直接看出真实成因，不必再来回改。</para>
+        ///
+        /// <para><b>成本。</b>只在「已含中文 + 字符数为 0」的对象上跑，正常界面一次都不会进；
+        /// 一次 <c>ForceMeshUpdate</c> 对小标签约 0.05–0.2 ms，且修好一次后永久生效
+        /// （<c>overflowMode</c> 改了就不会再退回去，mod 建标签后不再碰它）。</para>
+        /// </summary>
+        private static string RepairStuck(TMP_Text t, string s)
+        {
+            if (t == null) return null;
+            if (_repairTried.Contains(t.GetInstanceID())) return null;
+            if (CharCountOf(t) > 0) return null;
+
+            // ① 溢出模式：绕过上面那段「清零」分支（纵向溢出 + Ellipsis + 无回退快照）。
+            if (t.overflowMode != TextOverflowModes.Overflow)
+            {
+                t.overflowMode = TextOverflowModes.Overflow;
+                t.ForceMeshUpdate(true, true);
+                if (CharCountOf(t) > 0) return "溢出模式 Ellipsis→Overflow";
+            }
+
+            // ② scale static：这类对象不进 TMP 的重建队列，尺寸/回退变化后不会自己重排。
+            if (t.isTextObjectScaleStatic)
+            {
+                t.isTextObjectScaleStatic = false;
+                t.ForceMeshUpdate(true, true);
+                if (CharCountOf(t) > 0) return "关闭 isTextObjectScaleStatic";
+            }
+
+            // ③ 重建字体材质页（回退字体要作为第二个材质进 m_sharedMaterials 才画得出来）。
+            RepairFontLinks(t);
+            t.SetAllDirty();
+            t.ForceMeshUpdate(true, true);
+            if (CharCountOf(t) > 0) return "重建字体材质引用";
+
+            // ④ 用 SetText 重灌：绕开 text 属性的缓存与解析状态，直接重建处理数组。
+            try
+            {
+                t.SetText(s);
+                t.ForceMeshUpdate(true, true);
+                if (CharCountOf(t) > 0) return "SetText 重灌";
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("SetText 重灌失败：" + ex.Message);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 滚动自愈：每帧只查一小片文本组件，几百毫秒覆盖全场景。
+        ///
+        /// <para>定时巡检 10 秒一次，对「打开菜单才出现」的文本太慢（用户开一次环形菜单
+        /// 要等 10 秒才见字）。这里复用上一次全量扫描的组件数组（<see cref="_sweepCache"/>），
+        /// 每帧只取 40 个，且**先用 <c>characterCount</c> 这个廉价属性早退**，
+        /// 只有字符数为 0 的才去读 <c>m_text</c> 和做修复 —— 正常界面上等于零开销。
+        /// 2000 个文本 ≈ 50 帧（0.8 秒）扫完一轮。</para>
+        /// </summary>
+        internal static void ScanBlankSlice()
+        {
+            // —— 即时通道：翻译刚写进去的对象优先查，不等全量扫描（最迟下一帧见效）——
+            int budget = 40;
+            for (int k = _pending.Count - 1; k >= 0 && budget > 0; k--)
+            {
+                TMP_Text p = _pending[k];
+                _pending.RemoveAt(k);
+                budget--;
+                if (p == null) continue;
+                if (p.havePropertiesChanged) continue;   // TMP 还没重建；滚动通道会兜住
+                TryRepairIfStuck(p);
+            }
+
+            TMP_Text[] all = _sweepCache;
+            if (all == null || all.Length == 0) return;
+
+            int n = all.Length;
+            while (budget-- > 0 && n > 0)
+            {
+                if (_sweepCursor >= all.Length) _sweepCursor = 0;
+                TMP_Text t = all[_sweepCursor++];
+                n--;
+
+                if (t == null) continue;
+                if (!t.gameObject.activeInHierarchy) continue;
+                // 早退：已经有字排出来就不用管（这一步只读一个 int 字段）。
+                if (CharCountOf(t) > 0) continue;
+                if (t.havePropertiesChanged) continue;   // 还没重建，下一轮再看
+                TryRepairIfStuck(t);
+            }
+        }
+
+        /// <summary>判定 + 修复一个对象；救回来了就记一行日志。</summary>
+        private static void TryRepairIfStuck(TMP_Text t)
+        {
+            if (t == null) return;
+            if (!t.gameObject.activeInHierarchy) return;
+            if (CharCountOf(t) > 0) return;
+
+            string s = DisplayText(t);
+            if (string.IsNullOrEmpty(s) || s.Length > 200) return;
+            if (FirstCjk(s) == '\0') return;
+
+            string recipe = RepairStuck(t, s);
+            if (recipe != null)
+            {
+                Log.Info("[空白文本] 自愈（" + recipe + "）「" +
+                         (s.Length > 14 ? s.Substring(0, 14) + "…" : s) + "」→ 已画字符 " + CharCountOf(t));
+            }
+        }
+
+        /// <summary>待查对象（翻译刚写入时登记，见 <see cref="NotifyLocalized"/>）。</summary>
+        private static readonly System.Collections.Generic.List<TMP_Text> _pending =
+            new System.Collections.Generic.List<TMP_Text>();
+        private static readonly System.Collections.Generic.HashSet<int> _pendingIds =
+            new System.Collections.Generic.HashSet<int>();
+
+        /// <summary>
+        /// 登记一个「刚被翻译过」的文本对象，让即时自愈通道下一帧检查它。
+        ///
+        /// <para>为什么需要：TMP 的纵向溢出 + Ellipsis 会把整条中文清零（见
+        /// <see cref="RepairStuck"/>），而这类对象往往在用户打开菜单时才出现，
+        /// 10 秒一次的巡检太慢、全量扫描的组件缓存也还没刷新到它们。
+        /// 这里只做一次 List 追加 + HashSet 去重，开销可忽略。</para>
+        /// </summary>
+        internal static void NotifyLocalized(TMP_Text t)
+        {
+            if (t == null) return;
+            if (_pendingIds.Count > 4000) _pendingIds.Clear();
+            if (!_pendingIds.Add(t.GetInstanceID())) return;
+            _pending.Add(t);
+        }
+
         /// <summary>按需巡检期间强制重建网格（定时巡检里不这么做，免得每两秒全场景重排）。</summary>
         private static bool _forceInspect;
 
@@ -532,28 +706,19 @@ namespace NuclearOptionChineseLocalizationPatch
                     if (!DumpText(t, s, cjk)) break;
                     blank++;
 
-                    // —— 顺手修一次并前后对比：这就是「根因是不是材质引用没重建」的判定器。
-                    // 渲染侧的现象是「同一对象，拉丁字母正常、中文整条不见」，
-                    // 说明对象本身没坏、字形也在（日志里含「接」=是），
-                    // 缺的是**该对象材质/网格引用里没有中文回退那一页**
-                    // （回退表是插件运行期才挂上去的，早于挂表的对象不会自己重建）。
-                    // 重新赋一次 font 会走 SetFontAsset → 重建 m_sharedMaterials，
-                    // 再 SetAllDirty + ForceMeshUpdate 强制重排；两条都做完还不行，就不是这条路。
+                    // —— 顺手修一次并前后对比：日志里直接给出「是哪一级救回来的」。
                     Vector2 before = t.textBounds.size;
-                    RepairFontLinks(t);
-                    t.SetAllDirty();
-                    t.ForceMeshUpdate(true, true);
-                    Vector2 after = t.textBounds.size;
-                    if (after.x >= 1f)
+                    _repairTried.Remove(t.GetInstanceID());   // 按需巡检要重试，不受上次失败的影响
+                    string recipe = RepairStuck(t, s);
+                    if (recipe != null)
                     {
                         repaired++;
-                        Log.Info(string.Format("[空白文本]   修复后 bounds {0:F1}x{1:F1}（原 {2:F1}x{3:F1}）—— 重建材质引用即可恢复",
-                            after.x, after.y, before.x, before.y));
+                        Log.Info(string.Format("[空白文本]   修复成功（{0}）：已画字符 {1}，bounds {2:F1}x{3:F1}（原 {4:F1}x{5:F1}）",
+                            recipe, CharCountOf(t), t.textBounds.size.x, t.textBounds.size.y, before.x, before.y));
                     }
                     else
                     {
-                        Log.Info(string.Format("[空白文本]   重建材质引用后仍为 {0:F1}x{1:F1} —— 不是材质引用问题",
-                            after.x, after.y));
+                        Log.Info(string.Format("[空白文本]   四级修复全部无效，仍为 {0:F1}x{1:F1}", before.x, before.y));
                     }
                 }
 
