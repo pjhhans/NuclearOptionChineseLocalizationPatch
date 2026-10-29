@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
@@ -79,12 +79,6 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
             }
         }
 
-        /// <summary>已挂过回退的字体资产（instanceID）。挂一次就够，别每帧重复插。</summary>
-        private static readonly HashSet<int> Attached = new HashSet<int>();
-
-        /// <summary>上次扫描到的字体资产总数。数量没变就不重扫，省掉上万对象的遍历。</summary>
-        private static int _lastFontCount = -1;
-
         /// <summary>上次扫描的时刻（unscaledTime）。兜底扫描调用很频，扫描本身要节流。</summary>
         private static float _lastAttachScan = -100f;
 
@@ -159,11 +153,17 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
         /// 而它实际渲染用的 **MonoStrong 根本不在链上**），于是同一条中文串
         /// 在不同控件上时灵时不灵。挂到每个字体上是把这条路一次性堵死。</para>
         ///
-        /// <para><b>代价。</b>只在字体资产数量变化时扫一次
-        /// （<c>FindObjectsOfTypeAll</c>），挂表是 O(1) 的 List.Insert；
-        /// 挂完把这些控件的 <c>havePropertiesChanged</c> 置脏让它们重排一次，
-        /// 否则已经生成好的网格不会因为回退表变化而重建。</para>
+        /// <para><b>代价。</b>两秒节流一次 <c>FindObjectsOfTypeAll</c>（十几个资产），
+        /// 逐个 <c>List.Contains</c> 判断「这张表里现在有没有我」，
+        /// 缺了才 <c>Insert(0)</c>；挂完把这些控件的 <c>havePropertiesChanged</c> 置脏
+        /// 让它们重排一次，否则已经生成好的网格不会因为回退表变化而重建。</para>
+        ///
+        /// <para><b>为什么每次都核对内容、而不是记「挂过没」。</b>见下面循环里的注释：
+        /// mod 的字体资产会重建、instanceID 会复用，靠一次性的记账必然漏掉后来加载的字体。
+        /// 2026-10-29 的「环形菜单中文整条不显示」就是漏了这么一批。</para>
         /// </summary>
+        private static float _lastHealthyLog;
+
         private static void AttachToLoadedFonts()
         {
             try
@@ -177,15 +177,25 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
 
                 TMP_FontAsset[] all = UnityEngine.Resources.FindObjectsOfTypeAll<TMP_FontAsset>();
                 if (all == null || all.Length == 0) return;
-                if (all.Length == _lastFontCount && Attached.Count > 0) return;
-                _lastFontCount = all.Length;
 
-                int attached = 0;
+                // ★ 判据只看「这张表里现在有没有我的字体」，**不再用 instanceID 去重**。
+                //   原来靠 `Attached.Add(id)` 记「挂过没」＋「数量不变就整体跳过」，
+                //   但 mod 的字体资产会随场景/包重建，Unity 复用的 instanceID 完全可能撞上
+                //   旧的那条记录 → 新资产被判成「已挂过」而跳过，回退链里永远没有中文字体。
+                //   实机证据（2026-10-29）：NOA JetBrains Mono Bold SDF 的回退链只有 1 条、
+                //   且不是中文那一条；同一字体上的中文整条渲染为空（已画字符 0）。
+                //   改成每次都核对内容后，自愈能力不依赖任何缓存。
+                int total = 0, withMe = 0, attached = 0;
                 for (int i = 0; i < all.Length; i++)
                 {
                     TMP_FontAsset fa = all[i];
                     if (fa == null || fa == Font) continue;
-                    if (!Attached.Add(fa.GetInstanceID())) continue;
+                    total++;
+                    if (fa.fallbackFontAssetTable != null && fa.fallbackFontAssetTable.Contains(Font))
+                    {
+                        withMe++;
+                        continue;
+                    }
 
                     List<TMP_FontAsset> table = fa.fallbackFontAssetTable;
                     if (table == null)
@@ -193,12 +203,24 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
                         table = new List<TMP_FontAsset>(1);
                         fa.fallbackFontAssetTable = table;
                     }
-                    if (!table.Contains(Font)) table.Insert(0, Font);
+                    table.Insert(0, Font);
+                    withMe++;
                     attached++;
                 }
 
-                if (attached == 0) return;
-                Diagnostics.Log.Info($"已给 {attached} 个字体资产挂上中文回退（共扫描 {all.Length} 个）。");
+                if (attached == 0)
+                {
+                    // 没有新增也要按低频报一次「自检口径」，否则下次又只能靠猜。
+                    if (total > 0 && now - _lastHealthyLog > 30f)
+                    {
+                        _lastHealthyLog = now;
+                        Diagnostics.Log.Debug($"回退链自检：{total} 个字体资产全部已含中文回退。");
+                    }
+                    return;
+                }
+
+                _lastHealthyLog = now;
+                Diagnostics.Log.Info($"已给 {attached} 个字体资产挂上中文回退（本次扫描 {total} 个，累计 {withMe}/{total} 含中文）。");
 
                 if (!_coverageDumped)
                 {

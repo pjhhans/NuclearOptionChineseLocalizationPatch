@@ -234,10 +234,14 @@ namespace NuclearOptionChineseLocalizationPatch
         /// </summary>
         internal static void RunBlankReport()
         {
-            if (!BlankReportPending) return;
             _blankRuns++;
             try
             {
+                // ★ 先补回退链再巡检：mod 的字体是**用的时候才加载**的，
+                //   场景加载那一刻扫一遍根本扫不到它们（环形菜单的 JetBrains Mono 就是）。
+                //   这轮巡检每 10 秒跑一次，正好当回退链的补挂点。
+                Resources.CjkFontProvider.Register();
+
                 var all = UnityEngine.Resources.FindObjectsOfTypeAll<TMP_Text>();
                 for (int i = 0; i < all.Length; i++)
                     ReportBlankText(all[i]);
@@ -290,9 +294,12 @@ namespace NuclearOptionChineseLocalizationPatch
 
             RectTransform rt = t.rectTransform;
             if (rt == null) return;
-            float w = rt.rect.width, h = rt.rect.height;
             Vector2 bounds = t.textBounds.size;
-            if (w >= 2f && h >= 2f && bounds.x >= 1f) return;
+            // 判据只看「有没有画出东西」。**不能**把 rect 高度为 0 当成空白 ——
+            // 实机里大量正常文本的 rect 高度是 0（靠 preferredHeight 撑开），
+            // 按 rect 判会把它们全算成空白，然后被修复逻辑无谓重排（宽度 0 会触发换行，
+            // 反而把本来好好的文本弄成竖排）。
+            if (bounds.x >= 1f && bounds.y >= 1f) return;
 
             bool dumped = DumpText(t, s, firstCjk);
             if (dumped) Log.Info("[空白文本] ↑ 有中文但没渲染出来（矩形或包围盒为 0）。");
@@ -378,6 +385,20 @@ namespace NuclearOptionChineseLocalizationPatch
 
         private static System.Reflection.FieldInfo _mMatField;
 
+        /// <summary>回退链里的资产名（最多 3 个）——判定「我的中文字体到底在不在链上」。</summary>
+        private static string FallbackNames(TMP_FontAsset fa)
+        {
+            var list = fa != null ? fa.fallbackFontAssetTable : null;
+            if (list == null) return "无";
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < list.Count && i < 3; i++)
+            {
+                if (i > 0) sb.Append(" , ");
+                sb.Append(list[i] != null ? list[i].name : "<已销毁>");
+            }
+            return list.Count + " 个[" + sb + "]";
+        }
+
         private static char FirstCjk(string s)
         {
             for (int i = 0; i < s.Length; i++)
@@ -416,8 +437,12 @@ namespace NuclearOptionChineseLocalizationPatch
             TMP_FontAsset fa = t.font;
             int fb = (fa != null && fa.fallbackFontAssetTable != null) ? fa.fallbackFontAssetTable.Count : -1;
             bool hasGlyph = fa != null && fa.HasCharacter(firstCjk);
-            Log.Info(string.Format("[空白文本]   字体 {0}（回退链 {1} 个，含「{2}」={3}）材质 {4} 已画字符 {5} 溢出模式={6} 自动换行={7} 字号={8:F0}",
-                fa != null ? fa.name : "<null>", fb, firstCjk, hasGlyph ? "是" : "否",
+            TMP_FontAsset cjk = Resources.CjkFontProvider.Font;
+            Log.Info(string.Format("[空白文本]   字体 {0}（自身含「{1}」={2}；回退 {3}）中文字体{4}含该字={5} 材质 {6} 已画字符 {7} 溢出模式={8} 自动换行={9} 字号={10:F0}",
+                fa != null ? fa.name : "<null>", firstCjk, hasGlyph ? "是" : "否",
+                FallbackNames(fa),
+                cjk != null ? "" : "<未就绪，",
+                cjk != null ? (cjk.HasCharacter(firstCjk) ? "是" : "否") : "?",
                 MaterialsOf(t), t.textInfo != null ? t.textInfo.characterCount : -1,
                 (int)t.overflowMode, t.enableWordWrapping, t.fontSize));
             return true;
@@ -493,7 +518,7 @@ namespace NuclearOptionChineseLocalizationPatch
                     float w = rt.rect.width, h = rt.rect.height;
                     Vector2 b = t.textBounds.size;
 
-                    if (w >= 2f && h >= 2f && b.x >= 1f)
+                    if (b.x >= 1f && b.y >= 1f)
                     {
                         // 画出来了：只有当包围盒明显**跑出**自身矩形时才可疑
                         // （高度不足被顶出、或宽度为 0 却画了字）。
