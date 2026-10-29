@@ -188,6 +188,56 @@ def classify(table):
     return counts
 
 
+def check_empty_values(table):
+    """空译文是**硬错误**：命中即把整条文本替换成空串，界面上直接消失。
+
+    片段（>> << ==）尤其危险：`<<NE` 值为空 ⇒ 任何以 NE 结尾的行都被抹掉。
+    """
+    empty = [k for k, v in table.items() if not str(v).strip()]
+    if empty:
+        fail("空译文 %d 条（命中即整条文本消失）: %s"
+             % (len(empty), ", ".join(repr(k) for k in empty[:10])))
+
+
+def check_generic_fragments(table):
+    """通用短词片段是硬错误。
+
+    片段匹配分三类，危险度完全不同：
+      - `==` 中缀用 IndexOf 在**任意位置**命中 —— 最危险；
+      - `>>` 前缀只在开头命中 —— 次之（`TO ` 会把 `TO WEAPONS` 改成 `至 WEAPONS`）；
+      - `<<` 后缀只在结尾命中 —— 最安全（` PINGS`、` SORTIES` 这类单位词没问题）。
+
+    事故（2026-10-29）：子代理产出的 `" IN "`、`" IS "`、`" TO "`、`" LEFT"`、`" SEC"`
+    被自动提升成中缀片段后，正常句子被改写成半中半英（`TARGET IS INSIDE` → `TARGET 状况为 INSIDE`），
+    文本宽度变化 → TMP 每帧重排（界面错位）+ 每帧大量字符串分配（卡顿）。
+
+    判据按危险度分级：带**锚点**（分隔符号或数字）即可放行，否则要求足够长。
+    """
+    anchors = "·-:@%#/>()—›•×+&|$[\u2014"
+    whitelist = {" S OLD", " VEH ", "CMD  ", "TWR  ", "Runway ", "runway ",
+                 "TIED TO ", "Rearmed ",
+                 # 动词词缀：只在**句首**命中（>> 前缀），且大写开头 ——
+                 # `Sell RAH-72 Knockout` 是游戏用 "Sell " + 机型名实时拼出来的，
+                 # 只登记整串永远追不上。整串键（"Sell aircraft"）优先级更高，不会被它抢。
+                 "Sell "}
+    limits = {"==": 12, ">>": 8, "<<": 5}
+    bad = []
+    for k in table:
+        if not k.startswith((">>", "<<", "==")):
+            continue
+        body = k[2:]
+        if body in whitelist:
+            continue
+        if any(ch in body for ch in anchors) or any(ch.isdigit() for ch in body):
+            continue
+        if len(body) >= limits[k[:2]]:
+            continue
+        bad.append(k)
+    if bad:
+        fail("通用短词片段 %d 条（会改写正常句子，界面错位 + 卡顿）: %s"
+             % (len(bad), ", ".join(repr(k) for k in bad[:12])))
+
+
 def check_case_duplicates(table):
     buckets = collections.defaultdict(list)
     for key in table:
@@ -373,6 +423,8 @@ def main():
     print("  普通 %d / 模板 %d / 片段 %d"
           % (counts["普通"], counts["模板"], counts["片段"]))
 
+    check_empty_values(table)
+    check_generic_fragments(table)
     check_case_duplicates(table)
     check_brackets(table)
     check_same_text(table)
