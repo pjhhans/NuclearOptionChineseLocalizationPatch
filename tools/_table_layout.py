@@ -122,6 +122,11 @@ SCOPE_GROUPS = {
         # 控制台子树用的是通用节点名（Title/Label），会被本体同名词条串味，
         # 所以按「BS: + 控制台根节点名」单独成域。见 PatchHelpers.ConsoleScopeOf。
         "BS:AvConsole WMC",
+        # 2026-10-29 新增：mod 自绘 HUD（Hud 模块的 ScopeText 标签池）专用域。
+        # 它每个词的对象名都叫 "Word"（新标签池的固定命名），
+        # 且 CLEAR/GEAR/SAFE/BINGO/JOKER 等与本体同名不同义（HUD 的 CLEAR 是「无威胁」，
+        # 本体词表里是「清除」）。见 PatchHelpers.HudScopeName。
+        "BS:HUD",
     ],
     "units": [
         "AircraftName", "AircraftRank", "CounterMeasureName", "countermeasureName",
