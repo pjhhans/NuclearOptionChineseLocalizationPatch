@@ -10,8 +10,9 @@
 import io, json, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA = os.environ.get('NO_DATA', r'E:/SteamLibrary/steamapps/common/Nuclear Option\Git\NuclearOptionChineseLocalizationPatch\data')
-PACKS = os.path.join(ROOT, '_bs_gh', 'modules', 'Chatter', 'Assets', 'Packs')
+DATA = os.environ.get('NO_DATA') or os.path.join(ROOT, 'data')
+PACKS = (os.environ.get('BS_CHATTER_PACKS')
+         or os.path.join(ROOT, '_bs_gh', 'modules', 'Chatter', 'Assets', 'Packs'))
 
 LINE = re.compile(r'^\[([^\]]*)\]\s+(.+)$')
 PH = re.compile(r'<[a-zA-Z]+>')

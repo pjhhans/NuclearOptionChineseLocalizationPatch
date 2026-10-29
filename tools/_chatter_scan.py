@@ -8,8 +8,9 @@
 import io, json, os, re, sys, collections
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PACKS = os.path.join(ROOT, '_bs_gh', 'modules', 'Chatter', 'Assets', 'Packs')
-DATA = os.path.join(os.environ.get('NO_DATA', r'E:/SteamLibrary/steamapps/common/Nuclear Option\Git\NuclearOptionChineseLocalizationPatch\data'))
+PACKS = (os.environ.get('BS_CHATTER_PACKS')
+         or os.path.join(ROOT, '_bs_gh', 'modules', 'Chatter', 'Assets', 'Packs'))
+DATA = os.environ.get('NO_DATA') or os.path.join(ROOT, 'data')
 
 LINE = re.compile(r'^\[([^\]]*)\]\s+(.+)$')
 PH = re.compile(r'<[a-zA-Z]+>')
@@ -47,7 +48,11 @@ def main():
     for fn, tag, text in rows:
         if PH.search(text):
             ph_rows += 1
-            miss.append((fn, tag, text, 'PH'))
+            # 占位符台词在词表里是模板键：<x> 换成 {*}
+            if ('~' + PH.sub('{*}', text)) in tmpl:
+                hit += 1
+            else:
+                miss.append((fn, tag, text, 'PH'))
             continue
         if text in global_t:
             hit += 1
@@ -58,7 +63,8 @@ def main():
     per = collections.Counter(r[0] for r in miss)
     for k, v in sorted(per.items()):
         print(f'  {k:24} 缺口 {v}')
-    out = os.path.join(ROOT, '_chatter_missing.json')
+    import tempfile
+    out = os.path.join(tempfile.gettempdir(), 'chatter_missing.json')
     with io.open(out, 'w', encoding='utf-8') as f:
         json.dump(miss, f, ensure_ascii=False, indent=1)
     print('明细写入', out)
