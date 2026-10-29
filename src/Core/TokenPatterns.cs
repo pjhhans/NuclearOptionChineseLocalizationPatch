@@ -33,10 +33,21 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         ///   <c>\t</c> —— 制表符。游戏里它是 UI 列表的**列分隔符**（例如任务编辑器的
         ///               编队标签 <c>BDF Combined Arms Company\t$250m</c>：名称 + 费用）。
         ///               不切开的话整条永远查不中词表，而名称本身是有词条的。
+        ///   <c>·</c>（U+00B7）—— 第三方 mod 的**栏间分隔**（<c>COST 39 · POOL 994,520</c>）。
+        ///               这类行天然是「若干『关键字 + 数值』小段」拼起来的，整段永远查不中；
+        ///               切碎之后每段各走 <see cref="WordPlusNumber"/>，才能只翻关键字、留住数值。
+        ///   <c>▪ ▸</c> —— mod 的次级分隔符（<c>1 VEH G1 ▪ 14.4 KM</c>）。
         /// </summary>
         internal static readonly Regex Delimiter = new Regex(
-            @"(T/A-30|<[^>]+>.*?</[^>]+>|<[^>]+>|--|\s+-\s+|[:/\[\]()|\n\v\t])",
+            @"(T/A-30|<[^>]+>.*?</[^>]+>|<[^>]+>|--|\s+-\s+|[:/\[\]()|\n\v\t\u00B7\u25AA\u25B8])",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// 只由符号构成、切分后应原样跳过的单字符分隔符。
+        /// 必须与 <see cref="Delimiter"/> 里「本身没有语义」的那部分逐字一致 ——
+        /// 漏一个就会把该符号当成待译片段，记成一条永远补不掉的漏译。
+        /// </summary>
+        internal const string LoneDelimiters = ":/[]()|\n\v\t\u00B7\u25AA\u25B8";
 
         // ---------------------------------------------------------------- 噪声
         /// <summary>纯数值 + 短单位：<c>673 km/h</c>、<c>$1.96m</c>。</summary>
@@ -103,10 +114,43 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         internal static readonly Regex QuantitySuffix = new Regex(
             @"^(.*?)\s+x\d+$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        /// <summary><c>Rank 3</c> —— 词 + 数字，两者都要保留可读性。</summary>
+        /// <summary>
+        /// <c>Rank 3</c> / <c>COST 39</c> / <c>POOL 994,520</c> / <c>CHANGE −$750</c> ——
+        /// 词 + 数字，两者都要保留可读性。
+        ///
+        /// <para>数值尾部除了千分位逗号，还放行货币符号与前缀正负号（含 U+2212 数学减号）：
+        /// 第三方 mod 的财政卡把 <c>"CHANGE " + FormatResource(delta)</c> 直接拼出来，
+        /// 负值形如 <c>CHANGE −$750</c>，旧的正则只认裸数字，于是同一张卡上
+        /// 正数那一格是中文、负数那一格是英文。</para>
+        /// </summary>
         internal static readonly Regex WordPlusNumber = new Regex(
-            @"^([a-zA-Z\s]+)\s+([+-]?\d+(?:\.\d+)?)$",
+            @"^([a-zA-Z\s]+)\s+([+\-\u2212]?\$?\d[\d,]*(?:\.\d+)?[kKmM]?)$",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// <c>47 CARDS</c> / <c>350 FUNDS</c> / <c>0 SORTIES</c> —— 数字在前、词在后。
+        ///
+        /// <para>与 <see cref="WordPlusNumber"/> 正好互为镜像。第三方 mod 的抬头与小结
+        /// 大量用这个语序（<c>count + " CARDS"</c>、<c>credits + " FUNDS"</c>），
+        /// 词表里明明有 <c>CARDS</c>／<c>SORTIES</c> 的译文，整段却一直是英文 ——
+        /// 因为切片不切空格，整段作为一块去查表，永远差一个数字。</para>
+        /// </summary>
+        internal static readonly Regex NumberWord = new Regex(
+            @"^(\d[\d,]*)\s+([A-Za-z][A-Za-z ]{0,24})$",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// <c>01  OPEN a front for its map, programmes and perks.</c> ——
+        /// 铭牌段落里带两位序号的行（<c>AvBayPlate.Compose</c> 的拼法是
+        /// <c>(i+1).ToString("00") + "  " + orders[i]</c>，两条空格）。
+        ///
+        /// <para><b>为什么必须有这一条。</b>序号直接拼进正文，整行于是永远查不中词表；
+        /// 而切分只看标点不看序号，这一行会作为一个完整片段落到漏译分支 ——
+        /// 表现是「段落正文词条明明在同表里，铭牌上却整段英文」，mod 的 18 处
+        /// 面板脚注全是这个形状。剥掉序号再查，序号原样拼回。</para>
+        /// </summary>
+        internal static readonly Regex NumberedLine = new Regex(
+            @"^(\d{1,2})[ ]{2,}(?=[A-Za-z])(\S.*)$", RegexOptions.Compiled);
 
         /// <summary>
         /// <c>RAM-45 5</c> / <c>AGM-68 x2</c> 之类「型号 + 数量」。

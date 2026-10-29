@@ -442,7 +442,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (string.IsNullOrEmpty(part)) continue;
 
                 // 单字符分隔符本身
-                if (part.Length == 1 && ":/[]()|\n\v\t".IndexOf(part[0]) >= 0) continue;
+                if (part.Length == 1 && TokenPatterns.LoneDelimiters.IndexOf(part[0]) >= 0) continue;
 
                 // ---- 富文本标签块
                 if (part[0] == '<' && part[part.Length - 1] == '>')
@@ -471,6 +471,37 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
                 // ---- 纯文本段
                 string piece = part.Trim();
+
+                // ★ 边缘残留标签要先剥掉。
+                //   成对标签的分隔规则是**懒惰**匹配（<[^>]+>.*?</[^>]+>），它只吃到第一个
+                //   闭合标签为止，于是同一行剩下的部分会带着尾巴 `</mark>` 落到这里；
+                //   此时 part 首字符是 '<' 但末字符不是 '>'，上面那条"整块都是标签"的判据
+                //   不成立，于是带着 `</mark> RUMOR: …` 去查表 —— 必然查不中。
+                //   表现就是新闻滚动条那种「小标签块被翻（[传闻]），正文整段英文」。
+                //   只剥**两端**的标签（不剥中间），剥完仍是 part 的连续子串，
+                //   后面照旧能 part.Replace(piece, 译文)。
+                if (piece[0] == '<' || piece[piece.Length - 1] == '>')
+                {
+                    int cut = 0;
+                    while (cut < piece.Length && piece[cut] == '<')
+                    {
+                        int gt = piece.IndexOf('>', cut);
+                        if (gt < 0) break;
+                        cut = gt + 1;
+                        while (cut < piece.Length && char.IsWhiteSpace(piece[cut])) cut++;
+                    }
+                    int end = piece.Length;
+                    while (end > cut && piece[end - 1] == '>')
+                    {
+                        int lt = piece.LastIndexOf('<', end - 1);
+                        if (lt < cut) break;
+                        end = lt;
+                        while (end > cut && char.IsWhiteSpace(piece[end - 1])) end--;
+                    }
+                    if (cut >= end) continue;
+                    piece = piece.Substring(cut, end - cut);
+                }
+
                 if (piece.Length == 0 || HasChinese(piece)) continue;
                 // 术语片段保持英文，且**不记入漏译** —— 它不是漏译，是刻意保留。
                 if (_exclusions.IsKeptTerm(piece)) continue;
@@ -538,6 +569,24 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         {
             handled = false;
 
+            // 铭牌段落的两位序号（"01  OPEN a front for its map…"）。必须放在最前面：
+            // 它要求「数字 + 至少两个空格 + 字母开头」，判据最窄，先认领就不会被后面的
+            // 数值规则抢走（WordPlusNumber 只允许「纯字母词 + 数字」，本来也吃不下这行，
+            // 但它会把 01 当词部之外的残留，最终仍落到漏译分支）。
+            Match nline = TokenPatterns.NumberedLine.Match(text);
+            if (nline.Success)
+            {
+                handled = true;                       // 认领：正文自身的漏译由递归那一层记
+                string body = nline.Groups[2].Value.Trim();
+                string bodyTrans = Localize(body, scope);
+                if (bodyTrans != body)
+                {
+                    // 序号与它后面的空格原样保留（WordWrap 的悬挂缩进靠这两格对齐）
+                    return text.Substring(0, nline.Groups[2].Index) + bodyTrans;
+                }
+                return text;
+            }
+
             // 补给战报的费用归因尾缀（"Rearmed … - cost: $45.3k by Munitions Bunker" 里
             // " - cost: " 之后剩下的那一截）。必须放在最前面：它是**唯一**一条允许碰 " by " 的规则，
             // 而且靠金额锚定，绝不会误伤散文里的 " by "。
@@ -603,6 +652,23 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             {
                 handled = true;
                 return ReplacePrefix(text, wn.Groups[1].Value.Trim(), scope);
+            }
+
+            // 数字在前、词在后（`47 CARDS`、`350 FUNDS`、`0 SORTIES`）。
+            // 与上一条互为镜像；只在词真的查到译文时才认领，否则留给漏译分支，
+            // 免得把 `12 kJ` 这类纯单位读数吞掉（它们本来就该由噪声规则挡下）。
+            Match nw = TokenPatterns.NumberWord.Match(text);
+            if (nw.Success)
+            {
+                string nwWord = nw.Groups[2].Value.Trim();
+                string nwTrans = _table.LookupGlobal(nwWord);
+                if (string.IsNullOrEmpty(nwTrans) && !string.IsNullOrEmpty(scope))
+                    nwTrans = _table.LookupScoped(scope, nwWord);
+                if (!string.IsNullOrEmpty(nwTrans) && nwTrans != nwWord)
+                {
+                    handled = true;
+                    return nw.Groups[1].Value + " " + nwTrans;
+                }
             }
 
             // 型号 + 数量（`RAM-45 5`）。放在 WordPlusNumber 之后：纯字母的词
