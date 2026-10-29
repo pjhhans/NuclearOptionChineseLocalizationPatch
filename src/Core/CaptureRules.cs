@@ -173,5 +173,65 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             }
             return rest + " 号跑道";
         }
+
+        /// <summary>
+        /// <c>SW OF Maris Airport</c> → 地名 <c>Maris Airport</c> + 方位 <c>西南</c>。
+        ///
+        /// <para><b>为什么只拆不拼。</b>地名本身要查表（<c>Maris Airport</c> = 马里斯机场），
+        /// 而本类拿不到词表，所以这里只做「结构识别」，拼装在
+        /// <c>TextLocalizer.TranslateCapture</c> 里完成。</para>
+        ///
+        /// <para><b>为什么不会误伤。</b>判据卡死三个条件：方位必须是 8 个罗经点之一、
+        /// 必须是大写的 <c> OF </c>、地名 3–40 字符且不得再含 <c> OF </c>。
+        /// 台词里形如「X OF Y」的句子（<c>LOSS OF …</c>）第一段不是罗经点，直接不命中。</para>
+        /// </summary>
+        internal static bool TrySplitSector(string s, out string place, out string directionCn)
+        {
+            place = null;
+            directionCn = null;
+            if (string.IsNullOrEmpty(s) || s.Length < 9) return false;
+
+            int of = s.IndexOf(" OF ", StringComparison.Ordinal);
+            if (of < 1 || of > 2) return false;          // 方位最长 2 字符（NE/SW）
+
+            string dir = s.Substring(0, of);
+            directionCn = DirectionCn(dir);
+            if (directionCn == null) return false;
+
+            string rest = s.Substring(of + 4).Trim();
+            if (rest.Length < 3 || rest.Length > 40) return false;
+            if (rest.IndexOf(" OF ", StringComparison.Ordinal) >= 0) return false;
+
+            char first = rest[0];
+            if (!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || (first >= '0' && first <= '9')))
+                return false;
+            for (int i = 0; i < rest.Length; i++)
+            {
+                char c = rest[i];
+                bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                          || c == ' ' || c == '\'' || c == '-' || c == '.' || c == '/';
+                if (!ok) return false;
+            }
+
+            place = rest;
+            return true;
+        }
+
+        /// <summary>罗经点 → 中文方位（放在地名之后：马里斯机场西南）。</summary>
+        private static string DirectionCn(string dir)
+        {
+            switch (dir)
+            {
+                case "N": return "以北";
+                case "NE": return "东北";
+                case "E": return "以东";
+                case "SE": return "东南";
+                case "S": return "以南";
+                case "SW": return "西南";
+                case "W": return "以西";
+                case "NW": return "西北";
+                default: return null;
+            }
+        }
     }
 }

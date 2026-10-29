@@ -174,8 +174,37 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             string structured = CaptureRules.Convert(s);
             if (structured != null) return structured;
 
-            string hit = _table.LookupGlobal(s);
-            return hit ?? s;
+            // 「SW OF Maris Airport」这类**方位 + 地名**：结构由 CaptureRules 认，
+            // 但地名本身要查表，所以拼装在能拿到词表的地方做
+            // （玩家名/呼号同样形如「X OF Y」，CaptureRules 里已有严格边界，不会误伤）。
+            string place, dirCn;
+            if (CaptureRules.TrySplitSector(s, out place, out dirCn))
+            {
+                // 地名没词条就整条放弃 —— 拼成「SW OF Maris Airport西南」比不翻更糟。
+                string placeCn = _table.LookupGlobal(place);
+                if (placeCn != null) return placeCn + dirCn;
+            }
+
+            // 通配捕获段经常带着 kill feed 的阵营圆点（原文形如
+            // 「·Surf Class Patrol Boat shot down ·T/A-30 Compass」，模板把
+            // 「·名字」整段捕获）。带着「·」查表必败，而且回填后本来就该把
+            // 圆点留在原位 —— 所以剥掉两端的空白与单字符分隔符、只拿中间查表，
+            // 译文两侧再原样接回。
+            int start = 0, end = s.Length;
+            while (start < end && IsEdgeNoise(s[start])) start++;
+            while (end > start && IsEdgeNoise(s[end - 1])) end--;
+            if (end - start < 2) return s;                     // 剥完只剩圆点/空白，没东西可查
+
+            string core = s.Substring(start, end - start);
+            string hit = _table.LookupGlobal(core);
+            if (hit == null) return s;
+            return s.Substring(0, start) + hit + s.Substring(end);
+        }
+
+        /// <summary>捕获段两端可以剥掉的噪声字符：空白与单字符分隔符（圆点、短划等）。</summary>
+        private static bool IsEdgeNoise(char c)
+        {
+            return char.IsWhiteSpace(c) || TokenPatterns.LoneDelimiters.IndexOf(c) >= 0;
         }
 
         internal string Localize(string text, string scope)
@@ -342,6 +371,22 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         private string LocalizeLine(string text, string scope)
         {
             if (string.IsNullOrWhiteSpace(text)) return text;
+
+            // 通讯面板的台词引号：「<< 台词 >>」。< 是标签字符，正文包在 << >> 里时
+            // 标签正则会把整段正文当标签删掉（A 阶段查的是剥标签后的残壳，必不中）。
+            // 剥壳 → 翻内芯 → 原样包回。内芯已含中文则走下方幂等短路，天然防抖。
+            if (text.Length > 6 && text[0] == '<' && text[1] == '<'
+                && text[text.Length - 1] == '>' && text[text.Length - 2] == '>')
+            {
+                string inner = text.Substring(2, text.Length - 4).Trim();
+                if (inner.Length > 0)
+                {
+                    string innerTrans = Localize(inner, scope);
+                    if (!ReferenceEquals(innerTrans, inner) && innerTrans != inner)
+                        return "<< " + innerTrans + " >>";
+                }
+            }
+
             if (HasChinese(text)) return text;
             if (_exclusions.IsKeptTerm(text)) return text;
             if (IsNoise(text.Trim())) return text;
@@ -365,6 +410,21 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 string whole = _table.LookupGlobal(key);
                 if (whole != null && CanReplace(text, stripped))
                     return text.Replace(stripped, whole);
+            }
+
+            // ---------------------------------------------------------- A2 编号行
+            // 「01  Read the status card on the ramp: …」这类铭牌 / 常备命令行，
+            // 整行与词条只差一个两位序号。**必须在切片之前认领**：
+            // 正文里的冒号是分隔符，切片会先把行切碎，序号规则再也看不到完整正文。
+            // 2026-10-30 实机：同一块常备命令 02/03 有译文、01/04 永远英文，
+            // 唯一差别就是正文里有没有冒号（有冒号的被切碎，没有的走到 A2）。
+            Match nline = TokenPatterns.NumberedLine.Match(text);
+            if (nline.Success)
+            {
+                string nbody = nline.Groups[2].Value.Trim();
+                string nbodyTrans = Localize(nbody, scope);
+                if (nbodyTrans != nbody)
+                    return text.Substring(0, nline.Groups[2].Index) + nbodyTrans;
             }
 
             // ---------------------------------------------------------- B 句式
@@ -533,6 +593,45 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         }
 
         /// <summary>C 阶段：按分隔符切片，逐段处理，最后原样拼回。</summary>
+        /// <summary>
+        /// 把「标签 + 正文」交替的一段逐个正文段翻译，标签原样保留。
+        ///
+        /// <para>用于懒惰配对切出来的混合段：<c>&lt;/mark&gt; ECONOMY: … SHOPS  &lt;color=#00F0FF&gt;+++</c>。
+        /// 这类段整体查表必然失败（中间夹着标签），但它**内部**的正文是标准词条。</para>
+        /// </summary>
+        private string TranslateTaggedRun(string part, string scope, ref bool changed)
+        {
+            var sb = new StringBuilder(part.Length + 16);
+            int pos = 0;
+            foreach (Match m in TokenPatterns.Tag.Matches(part))
+            {
+                if (m.Index > pos)
+                    sb.Append(TranslateRun(part.Substring(pos, m.Index - pos), scope, ref changed));
+                sb.Append(m.Value);
+                pos = m.Index + m.Length;
+            }
+            if (pos < part.Length) sb.Append(TranslateRun(part.Substring(pos), scope, ref changed));
+            return sb.ToString();
+        }
+
+        /// <summary>翻译一段**不含标签**的正文，保留原有的首尾空白与分隔符。</summary>
+        private string TranslateRun(string run, string scope, ref bool changed)
+        {
+            string t = run.Trim();
+            if (t.Length == 0) return run;
+            if (t == TokenPatterns.LoneDelimiterStrings) return run;
+            if (HasChinese(t) || IsNoise(t)) return run;
+            if (_exclusions.IsKeptTerm(t) || _exclusions.IsExcluded(t, scope)) return run;
+
+            string translated = Localize(t, scope);
+            if (translated == t) return run;
+
+            int at = run.IndexOf(t, StringComparison.Ordinal);
+            if (at < 0) return run;
+            changed = true;
+            return run.Substring(0, at) + translated + run.Substring(at + t.Length);
+        }
+
         private string SliceAndRebuild(string text, string scope, bool isForceScoped)
         {
             string[] parts = TokenPatterns.Delimiter.Split(text);
@@ -545,9 +644,19 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
                 // 单字符分隔符本身
                 if (part.Length == 1 && TokenPatterns.LoneDelimiters.IndexOf(part[0]) >= 0) continue;
+                // 多字符的纯符号分隔符（新闻条的 `+++`）同样原样跳过
+                if (part == TokenPatterns.LoneDelimiterStrings) continue;
 
                 // ---- 富文本标签块
-                if (part[0] == '<' && part[part.Length - 1] == '>')
+                //   ★ 只有「以**开**标签开头、以标签结尾」的段才是整块标签。
+                //     以闭合标签开头的段（`</mark> ECONOMY: … <color=#00F0FF>`）不是 ——
+                //     它是懒惰配对切出来的尾巴，中间夹着正文，必须走下面的纯文本分支。
+                //     2026-10-30 实机：新闻滚动条多条拼接时**只有第一条**永远英文，
+                //     就是它：首条的尾段恰好以 `</mark>` 开头、以 `<color=…>` 结尾，
+                //     被误判成标签块 → 去掉标签后中间夹着 `+++` 分隔符 → 查表必失败；
+                //     后续条目没有这个形状，所以照常翻译。
+                if (part[0] == '<' && part[part.Length - 1] == '>'
+                    && !(part.Length > 1 && part[1] == '/'))
                 {
                     // 剥掉标签、取内部正文递归翻译，再原样填回。
                     // ★ 不要用"开闭标签必须完全对称"的正则匹配整块：TMP 的闭合标签**不重复属性**
@@ -564,8 +673,17 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                         string innerTranslated = Localize(innerTrim, scope);
                         if (innerTranslated != innerTrim)
                         {
-                            parts[i] = part.Replace(innerTrim, innerTranslated);
-                            changed = true;
+                            // ★ 用 IndexOf 定位后拼接，不用 Replace：
+                            //   innerTrim 是 Trim 过的，若段内有内部标签（`A<b>B</b>C`），
+                            //   "ABC" 就不是 part 的连续子串，Replace 会静默空操作，
+                            //   表现是「句子已经翻好了，界面却还是英文」。
+                            int at = part.IndexOf(innerTrim, StringComparison.Ordinal);
+                            if (at >= 0)
+                            {
+                                parts[i] = part.Substring(0, at) + innerTranslated
+                                           + part.Substring(at + innerTrim.Length);
+                                changed = true;
+                            }
                         }
                     }
                     continue;
@@ -614,6 +732,17 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     }
                     if (cut >= end) continue;
                     piece = piece.Substring(cut, end - cut);
+                }
+
+                // ★ 剥了两端还剩标签（`</mark> … SHOPS  <color=#00F0FF>+++`）：
+                //   说明这一段是「标签 + 正文」交替，套不进任何单条词条。
+                //   逐个把标签之间的正文送去翻译，标签原样写出。
+                //   2026-10-30 实机：新闻滚动条多条拼接时**只有第一条**永远英文，就是这种形状 ——
+                //   首条尾段既不是纯标签块（正文夹在中间），也不以标签收尾（尾巴是 `+++`）。
+                if (piece.IndexOf('<') >= 0)
+                {
+                    parts[i] = TranslateTaggedRun(part, scope, ref changed);
+                    continue;
                 }
 
                 if (piece.Length == 0 || HasChinese(piece)) continue;

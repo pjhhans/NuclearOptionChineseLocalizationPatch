@@ -734,6 +734,16 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     if (caps[i].IndexOf('\n') >= 0 || caps[i].IndexOf('\r') >= 0) return null;
                 }
 
+                // 「裸二元」模板（{*} 动词 {*}，两个固定段都是空）只服务 kill feed 的
+                // **主动语态**（"UH-90 Ibis demolished Hellpad"）。被动句
+                // （"… factories are destroyed and …"）会被它吃成 {0}="…are"、
+                // 动词被误翻成「摧毁了」，句子支离破碎（2026-10-30 实机 victory 文本）。
+                // 被动句的特征极稳：{0} 以 be 动词收尾、{1} 以 "by " 开头 —— 命中即放弃。
+                if (Segments.Length == 3 && Segments[0].Length == 0 && Segments[2].Length == 0)
+                {
+                    if (EndsWithBeVerb(caps[0]) || StartsWithBy(caps[1])) return null;
+                }
+
                 Func<string, string> tr = Owner != null ? Owner.CaptureTranslator : null;
                 string result = Value;
                 for (int i = 0; i < caps.Length; i++)
@@ -743,6 +753,31 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     result = result.Replace("{" + i + "}", cap);
                 }
                 return result;
+            }
+
+            /// <summary>{0} 是否以 be 动词收尾（被动语态的前半句）。
+            /// 词表自带前导空格 —— 「factories are」的尾 4 字符就是「 are」，
+            /// 前一个字符是主语的词尾字母，**不能**再要求空格。</summary>
+            private static bool EndsWithBeVerb(string s)
+            {
+                string[] beVerbs = { " is", " are", " was", " were", " be", " been", " am",
+                                     " isn't", " aren't", " wasn't", " weren't" };
+                for (int i = 0; i < beVerbs.Length; i++)
+                {
+                    string v = beVerbs[i];
+                    if (s.Length < v.Length) continue;
+                    if (string.Compare(s, s.Length - v.Length, v, 0, v.Length,
+                                       StringComparison.OrdinalIgnoreCase) == 0) return true;
+                }
+                return false;
+            }
+
+            private static bool StartsWithBy(string s)
+            {
+                if (s.Length < 3) return false;
+                return (s[0] == 'b' || s[0] == 'B')
+                    && (s[1] == 'y' || s[1] == 'Y')
+                    && s[2] == ' ';
             }
         }
 

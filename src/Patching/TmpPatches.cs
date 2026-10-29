@@ -133,6 +133,13 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             string translated;
             if (!PatchHelpers.TryLocalize(lookup, __instance, out translated)) return;
 
+            // ★ HUD 的标签池是**逐字**画上去的（自带 12 px 等宽格子），不解析富文本：
+            //   标签会原样显示成「武器保险 <b>已开启</b>」，而且 `FitsHudGrid` 会把
+            //   `<b>` 当成五个 0.65 em 的字符，把本来放得下的译文判成放不下。
+            //   2026-10-30 实机截图就是这个形状。
+            if (translated.IndexOf('<') >= 0)
+                translated = Core.TokenPatterns.Tag.Replace(translated, string.Empty);
+
             if (!FitsHudGrid(original, translated))
             {
                 PatchHelpers.ReportHudTooWide(lookup, translated);

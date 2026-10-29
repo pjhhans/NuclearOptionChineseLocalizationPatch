@@ -37,17 +37,26 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         ///               这类行天然是「若干『关键字 + 数值』小段」拼起来的，整段永远查不中；
         ///               切碎之后每段各走 <see cref="WordPlusNumber"/>，才能只翻关键字、留住数值。
         ///   <c>▪ ▸</c> —— mod 的次级分隔符（<c>1 VEH G1 ▪ 14.4 KM</c>）。
+        ///   <c>+++</c> —— mod 新闻滚动条的**条目分隔符**
+        ///               （<c>&lt;color=#00F0FF&gt;+++&lt;/color&gt;</c>，多条拼接成一整条串）。
+        ///               不切开的话，首条正文的尾段会变成
+        ///               <c>ECONOMY: … SHOPS  &lt;color=#00F0FF&gt;+++</c>——中间夹着标签，
+        ///               查表必失败（2026-10-30 实机：只有第一条英文）。
         /// </summary>
         internal static readonly Regex Delimiter = new Regex(
-            @"(T/A-30|<[^>]+>.*?</[^>]+>|<[^>]+>|--|\s+-\s+|[:/\[\]()|\n\v\t\u00B7\u25AA\u25B8\u25B2\u2715])",
+            @"(T/A-30|\+\+\+|<[^>]+>.*?</[^>]+>|<[^>]+>|--|\s+-\s+|[:/\[\]()|\n\v\t\u00B7\u25AA\u25B8\u25B2\u2715])",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
-        /// 只由符号构成、切分后应原样跳过的单字符分隔符。
+        /// 只由符号构成、切分后应原样跳过的分隔符。
         /// 必须与 <see cref="Delimiter"/> 里「本身没有语义」的那部分逐字一致 ——
         /// 漏一个就会把该符号当成待译片段，记成一条永远补不掉的漏译。
+        /// （<c>+++</c> 是唯一的多字符条目，长度判据在 <c>SliceAndRebuild</c> 里单独处理。）
         /// </summary>
         internal const string LoneDelimiters = ":/[]()|\n\v\t\u00B7\u25AA\u25B8\u25B2\u2715";
+
+        /// <summary>多字符的纯符号分隔符，切分后同样原样跳过。</summary>
+        internal const string LoneDelimiterStrings = "+++";
 
         // ---------------------------------------------------------------- 噪声
         /// <summary>

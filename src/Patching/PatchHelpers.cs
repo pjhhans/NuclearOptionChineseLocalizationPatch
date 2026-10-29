@@ -185,8 +185,10 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
 
             string scope = null;
             Transform cur = t;
-            // 深度 5：Title 直接挂在根下（1 层）；选项卡标签是 根 > Tabs > Control X > Label（3 层）。
-            for (int depth = 0; depth < 5 && cur != null; depth++)
+            // 深度 8：Title 直接挂在根下（1 层）；选项卡标签是 根 > Tabs > Control X > Label（3 层）；
+            // 页面内的按钮文字更深一头（根 > Page > Section > Row > Button > Label，5–6 层），
+            // 原来卡在 5 层会把绘图工具栏那种按钮漏掉（2026-10-30）。缓存后每个节点只走一次。
+            for (int depth = 0; depth < 8 && cur != null; depth++)
             {
                 string n = cur.name;
                 if (n != null && n.Length > 9 && n.StartsWith("AvConsole ", StringComparison.Ordinal))
@@ -270,6 +272,34 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         }
 
         /// <summary>
+        /// 控件不解析富文本时，把译文里的标签剥掉。
+        ///
+        /// <para>mod 自绘 HUD（<c>ScopeText</c> 的标签池）是逐字上屏、且这些组件
+        /// <c>richText = false</c>：标签不会被解析，只会<b>原样画出来</b>。
+        /// 2026-10-30 实机屏幕上直接出现「武器保险 &lt;b&gt;已开启&lt;/b&gt;」。</para>
+        ///
+        /// <para>游戏自己的通报框是 <c>richText = true</c>，同一条词条在那里需要保留加粗 ——
+        /// 所以剥不剥标签必须按<b>控件能力</b>决定，不能写死在词表里（写死就会牺牲另一处）。</para>
+        /// </summary>
+        private static string FitRichText(Component comp, string text)
+        {
+            if (string.IsNullOrEmpty(text) || text.IndexOf('<') < 0) return text;
+
+            bool parses;
+            var tmp = comp as TMP_Text;
+            if (tmp != null) parses = tmp.richText;
+            else
+            {
+                var legacy = comp as Text;
+                if (legacy == null) return text;   // 认不出控件类型：按「能解析」处理，保持原样
+                parses = legacy.supportRichText;
+            }
+            if (parses) return text;
+
+            return Core.TokenPatterns.Tag.Replace(text, string.Empty);
+        }
+
+        /// <summary>
         /// 尝试翻译。返回 true 表示应当写回（结果与原文不同且确实含中文）。
         /// </summary>
         internal static bool TryLocalize(string original, Component comp, out string translated)
@@ -305,7 +335,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 string altHit = LocalizationPlugin.Table.LookupScoped(altScope, original);
                 if (altHit != null && altHit != original && Core.TextLocalizer.HasChinese(altHit))
                 {
-                    translated = altHit;
+                    translated = FitRichText(comp, altHit);
                     Remember(altHit, original);
                     RewriteGuard.Track(comp, original, altHit);
                     Host.NotifyTranslationActivity();
@@ -317,7 +347,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             string result = localizer.Localize(original, scope);
             if (result == original || !Core.TextLocalizer.HasChinese(result)) return false;
 
-            translated = result;
+            translated = FitRichText(comp, result);
             Remember(result, original);
             RewriteGuard.Track(comp, original, result);
             // 新内容真的翻出来了 —— 告诉兜底扫描「界面在变」，把空闲退避清零，
