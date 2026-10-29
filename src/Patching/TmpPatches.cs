@@ -116,12 +116,26 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             if (!PatchHelpers.IsHudWord(__instance)) return;
 
             string original = new string(sourceText, start, length);
+
+            // ★ 被 FitText 截断过的串要先还原再查表。
+            //   `ScopeCanvas.FitText` 在宽度不够时是**先截断原文、再加省略号**，然后把
+            //   `"DUSTBOWL HIGHWAY…"` 整条交给 Text/Draw —— 词表里当然没有这种带省略号的键，
+            //   于是长名字（基地、机场、单位）永远保持英文。剥掉省略号再查，译文一般更短，
+            //   正好放回原来那个格子。
+            //   宽度仍按**带省略号的原文长度**算（那才是 Draw 给的框），否则会误判为放得下。
+            string lookup = original;
+            if (lookup.Length > 1 && lookup[lookup.Length - 1] == '\u2026')
+            {
+                lookup = lookup.Substring(0, lookup.Length - 1).TrimEnd();
+                if (lookup.Length == 0) return;
+            }
+
             string translated;
-            if (!PatchHelpers.TryLocalize(original, __instance, out translated)) return;
+            if (!PatchHelpers.TryLocalize(lookup, __instance, out translated)) return;
 
             if (!FitsHudGrid(original, translated))
             {
-                PatchHelpers.ReportHudTooWide(original, translated);
+                PatchHelpers.ReportHudTooWide(lookup, translated);
                 return;
             }
 
