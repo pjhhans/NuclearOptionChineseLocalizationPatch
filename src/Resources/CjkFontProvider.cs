@@ -82,6 +82,59 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
         /// <summary>上次扫描的时刻（unscaledTime）。兜底扫描调用很频，扫描本身要节流。</summary>
         private static float _lastAttachScan = -100f;
 
+        /// <summary>按需补挂的次数（只用于日志限流，真正的新字体不会多）。</summary>
+        private static int _onDemandAttached;
+
+        /// <summary>
+        /// 给**这条文本实际使用的字体**补挂中文回退。翻译命中时调用，O(1)。
+        ///
+        /// <para><b>这是「每 2 秒枚举全部字体资产」的替代品。</b>原来的
+        /// <see cref="AttachToLoadedFonts"/> 用 <c>FindObjectsOfTypeAll&lt;TMP_FontAsset&gt;()</c>
+        /// 全内存找字体，一秒两次 ⇒ 拖动视角时规律性掉帧（2026-10-30 实机）。
+        /// 而「需要中文回退的字体」一定是**正在渲染我们译文的那张字体** ——
+        /// 翻译命中那一刻手里就有它（<c>t.font</c>），根本不用去内存里翻。</para>
+        ///
+        /// <para><b>时机</b>：本方法在 <c>set_text</c> 前缀里、TMP 重建网格之前执行，
+        /// 所以回退链在第一次排版前就已经齐了，不会出现「先画成方块再补上」。</para>
+        /// </summary>
+        internal static void EnsureFallback(TMP_Text t)
+        {
+            TMP_FontAsset mine = Font;
+            if (mine == null || t == null) return;
+
+            TMP_FontAsset fa = t.font;
+            if (fa == null || fa == mine) return;
+
+            List<TMP_FontAsset> table = fa.fallbackFontAssetTable;
+            if (table != null && table.Contains(mine)) return;   // 常态：一次 List.Contains（1~3 项）
+
+            try
+            {
+                if (table == null)
+                {
+                    table = new List<TMP_FontAsset>(1);
+                    fa.fallbackFontAssetTable = table;
+                }
+                table.Insert(0, mine);
+            }
+            catch (Exception ex)
+            {
+                Diagnostics.Log.Debug("按需挂载回退失败：" + ex.Message);
+                return;
+            }
+
+            _onDemandAttached++;
+            if (_onDemandAttached <= 10)
+                Diagnostics.Log.Info($"字体「{fa.name}」缺中文回退，已在首次用到时补挂（第 {_onDemandAttached} 个）。");
+        }
+
+        /// <summary>下次 <see cref="Register"/> 无视节流、立刻做一次全量兜底扫描（场景加载时用）。</summary>
+        internal static void ForceScan()
+        {
+            _lastAttachScan = -100f;
+            Register();
+        }
+
         private static bool _coverageDumped;
 
         /// <summary>
@@ -168,11 +221,11 @@ namespace NuclearOptionChineseLocalizationPatch.Resources
         {
             try
             {
-                // 兜底扫描每隔一两秒就会调一次 Register；FindObjectsOfTypeAll 是 O(全部对象)，
-                // 不节流的话光这一项就够把每帧预算吃掉一块。字体资产只在场景/包加载时新增，
-                // 两秒扫一次完全够用。
+                // 兜底扫描是**只兜底**：正常路径由 EnsureFallback 在翻译命中时 O(1) 补挂，
+                // 这里 60 秒一次只为「有字体被用到、但我们没翻译过它上面任何一条文本」这种漏网情况。
+                // FindObjectsOfTypeAll 是 O(全部已加载对象)，两秒一次的代价是拖动视角时规律性掉帧。
                 float now = Time.unscaledTime;
-                if (now - _lastAttachScan < 2f) return;
+                if (now - _lastAttachScan < 60f) return;
                 _lastAttachScan = now;
 
                 TMP_FontAsset[] all = UnityEngine.Resources.FindObjectsOfTypeAll<TMP_FontAsset>();

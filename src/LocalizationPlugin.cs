@@ -208,15 +208,49 @@ namespace NuclearOptionChineseLocalizationPatch
             new System.Collections.Generic.HashSet<int>();
         private static int _blankRuns;
 
-        /// <summary>上一次全量扫描拿到的文本组件（滚动自愈用，见 <see cref="ScanBlankSlice"/>）。</summary>
-        private static TMP_Text[] _sweepCache;
+        /// <summary>
+        /// 参与滚动自愈的文本组件 —— **由翻译命中时登记而来，不再做全内存枚举**。
+        ///
+        /// <para><b>为什么改掉。</b>2026-10-30 实机反馈「拖动视角每隔几秒卡顿一次」，追到的就是这里：
+        /// 原来这个数组每 2 秒被 <see cref="RunBlankReport"/> 用
+        /// <c>Resources.FindObjectsOfTypeAll&lt;TMP_Text&gt;()</c> 全量刷新一次。
+        /// 那个 API 是**遍历全部已加载对象**（场景 + 所有资产，量级 5~20 ms），
+        /// 一秒两次（这里一次 + 字体挂载再一次）就是规律性掉帧。</para>
+        ///
+        /// <para>而真正需要自愈的只有「我们写过中文的组件」，它们<b>必然</b>经过
+        /// <see cref="NotifyLocalized"/>（补丁四条通路 + 兜底扫描 + 原地翻译，全部汇到
+        /// <see cref="PatchHelpers.TryLocalize"/>）。所以全量枚举从头到尾都是多余的。</para>
+        /// </summary>
+        private static readonly System.Collections.Generic.List<TMP_Text> _sweep =
+            new System.Collections.Generic.List<TMP_Text>(512);
+
+        /// <summary>
+        /// 「已经在 <see cref="_sweep"/> 里」的判据。用**弱表**而不是 instanceID：
+        /// 池化对象销毁后 Unity 会复用 instanceID，按 ID 记账会把新对象判成旧对象
+        /// —— 与 10-29 那次「回退链按 ID 记账漏挂字体」同一个坑。
+        /// </summary>
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TMP_Text, object> _sweepSeen =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<TMP_Text, object>();
+
+        /// <summary>弱表的占位值（<c>ConditionalWeakTable</c> 要求非 null value）。</summary>
+        private static readonly object SweepMark = new object();
 
         /// <summary>滚动游标。</summary>
         private static int _sweepCursor;
+
+        /// <summary>本轮已扫过的空槽数（对象已销毁），用于决定何时压缩列表。</summary>
+        private static int _sweepNulls;
+
+        /// <summary>登记表上限。只做保险，正常界面量级是几百到两千。</summary>
+        private const int MaxSweepTargets = 6000;
+
         private const int BlankRuns = 20;
 
         /// <summary>空白巡检跑过几次（前 <see cref="BlankRuns"/> 次用快节奏）。</summary>
         internal static int BlankRunsDone => _blankRuns;
+
+        /// <summary>是否还在「进场景后的 40 秒快节奏窗口」内（此期间巡检 2 秒一次，之后 10 秒一次）。</summary>
+        internal static bool BlankWarmup => _blankRuns < BlankRuns;
 
         /// <summary>
         /// 巡检是否还要继续。
@@ -224,9 +258,11 @@ namespace NuclearOptionChineseLocalizationPatch
         /// <para><b>为什么不再「跑够次数就彻底停」。</b>这轮巡检已经不只是诊断，它还负责
         /// **自愈**：把「有中文却一个字符都没画出来」的文本对象重建一次字体材质引用。
         /// 而这类对象往往出现在用户后来才打开的菜单里（环形菜单 / WMC 控制台 / 事件台），
-        /// 40 秒窗口早就过了 —— 停掉巡检等于把自愈能力一起停掉。
-        /// 所以改成：前 20 次 2 秒一次（覆盖进场景那阵），之后 10 秒一次长期低频跑。
-        /// 代价是每 10 秒一次 FindObjectsOfTypeAll（数百个组件，≈0.3 ms），可忽略。</para>
+        /// 40 秒窗口早就过了 —— 停掉巡检等于把自愈能力一起停掉。</para>
+        ///
+        /// <para><b>但周期巡检本身必须是廉价的。</b>自愈的真正驱动是
+        /// <see cref="ScanBlankSlice"/> 的滚动通道（每帧 40 个、只读一个 int 字段就早退），
+        /// 这里只剩「补挂回退链」这一件事，成本是一次 <c>List.Contains</c>。</para>
         /// </summary>
         internal static bool BlankReportPending
         {
@@ -236,7 +272,10 @@ namespace NuclearOptionChineseLocalizationPatch
         /// <summary>
         /// 驱动一次空白巡检。独立于兜底扫描开关 —— 实机里那个开关是默认关的，
         /// 挂进 ScanScene 等于永远不执行（第一次部署就踩了这个坑）。
-        /// 只有 6 次机会、每次间隔 2 秒，跑完对长期性能零影响。
+        ///
+        /// <para><b>不许在这里做任何全内存枚举。</b><c>Resources.FindObjectsOfTypeAll</c>
+        /// 是 O(全部已加载对象) 的调用，曾被放在这条 2 秒一次的通路上，
+        /// 表现为「拖动视角每隔几秒卡一下」（2026-10-30 实机）。</para>
         /// </summary>
         internal static void RunBlankReport()
         {
@@ -245,19 +284,18 @@ namespace NuclearOptionChineseLocalizationPatch
             {
                 // ★ 先补回退链再巡检：mod 的字体是**用的时候才加载**的，
                 //   场景加载那一刻扫一遍根本扫不到它们（环形菜单的 JetBrains Mono 就是）。
-                //   这轮巡检每 10 秒跑一次，正好当回退链的补挂点。
+                //   现在这条调用的成本只剩一次 List.Contains —— 全量兜底扫描已降到 60 秒一次，
+                //   真正「用的时候才补挂」由 CjkFontProvider.EnsureFallback 在翻译命中时 O(1) 完成。
                 Resources.CjkFontProvider.Register();
 
-                var all = UnityEngine.Resources.FindObjectsOfTypeAll<TMP_Text>();
-                _sweepCache = all;
-                _sweepCursor = 0;
-
-                // 全量报告是诊断用（读文本、打日志、量包围盒），每 5 轮做一次就够了；
+                // 诊断报告只覆盖「进场景后的前 40 秒」，且每 5 轮（≈10 秒）一次。
+                // 读的是登记表（= 我们写过中文的组件），**不再全内存枚举**；
                 // 自愈本身走 ScanBlankSlice 的滚动通道，不依赖这里。
-                if (_blankRuns % 5 == 1)
+                if (_blankRuns <= BlankRuns && _blankRuns % 5 == 1)
                 {
-                    for (int i = 0; i < all.Length; i++)
-                        ReportBlankText(all[i]);
+                    int count = _sweep.Count;
+                    for (int i = 0; i < count; i++)
+                        ReportBlankText(_sweep[i]);
                 }
             }
             catch (Exception ex)
@@ -572,7 +610,7 @@ namespace NuclearOptionChineseLocalizationPatch
         /// 滚动自愈：每帧只查一小片文本组件，几百毫秒覆盖全场景。
         ///
         /// <para>定时巡检 10 秒一次，对「打开菜单才出现」的文本太慢（用户开一次环形菜单
-        /// 要等 10 秒才见字）。这里复用上一次全量扫描的组件数组（<see cref="_sweepCache"/>），
+        /// 要等 10 秒才见字）。这里复用**翻译命中时登记的组件表**（<see cref="_sweep"/>），
         /// 每帧只取 40 个，且**先用 <c>characterCount</c> 这个廉价属性早退**，
         /// 只有字符数为 0 的才去读 <c>m_text</c> 和做修复 —— 正常界面上等于零开销。
         /// 2000 个文本 ≈ 50 帧（0.8 秒）扫完一轮。</para>
@@ -610,23 +648,68 @@ namespace NuclearOptionChineseLocalizationPatch
                 TryRepairIfStuck(e.Text);
             }
 
-            TMP_Text[] all = _sweepCache;
-            if (all == null || all.Length == 0) return;
+            int total = _sweep.Count;
+            if (total == 0) return;
 
-            int n = all.Length;
+            int n = total;
             while (budget-- > 0 && n > 0)
             {
-                if (_sweepCursor >= all.Length) _sweepCursor = 0;
-                TMP_Text t = all[_sweepCursor++];
+                if (_sweepCursor >= _sweep.Count)
+                {
+                    // 走完一轮：空槽比例超过 1/4 就压一次（池化 UI 会留下大量已销毁的墓碑）。
+                    if (_sweepNulls * 4 >= _sweep.Count) CompactSweep();
+                    else { _sweepNulls = 0; _sweepCursor = 0; }
+                    if (_sweep.Count == 0) return;
+                    n = _sweep.Count;
+                }
+
+                int i = _sweepCursor++;
+                TMP_Text t = _sweep[i];
                 n--;
 
-                if (t == null) continue;
+                if (t == null) { _sweepNulls++; continue; }
                 if (!t.gameObject.activeInHierarchy) continue;
                 // 早退：已经有字排出来就不用管（这一步只读一个 int 字段）。
                 if (CharCountOf(t) > 0) continue;
                 if (t.havePropertiesChanged) continue;   // 还没重建，下一轮再看
                 TryRepairIfStuck(t);
             }
+        }
+
+        /// <summary>
+        /// 登记一个「我们写过中文」的组件，让它进入滚动自愈的名单。
+        ///
+        /// <para>这就是原来每 2 秒一次 <c>FindObjectsOfTypeAll&lt;TMP_Text&gt;</c> 的替代品：
+        /// 名单只需要「可能渲染为空的中文组件」，而那些组件无一例外都会经过
+        /// <see cref="Patching.PatchHelpers.TryLocalize"/>。</para>
+        /// </summary>
+        private static void AddSweepTarget(TMP_Text t)
+        {
+            if (t == null) return;
+
+            object seen;
+            if (_sweepSeen.TryGetValue(t, out seen)) return;
+            if (_sweep.Count >= MaxSweepTargets)
+            {
+                CompactSweep(silent: true);
+                if (_sweep.Count >= MaxSweepTargets) return;
+            }
+            _sweepSeen.Add(t, SweepMark);
+            _sweep.Add(t);
+        }
+
+        /// <summary>把已销毁对象留下的空槽清掉。<paramref name="silent"/> 时不动游标（调用方正在遍历）。</summary>
+        private static void CompactSweep(bool silent = false)
+        {
+            int w = 0;
+            for (int i = 0; i < _sweep.Count; i++)
+            {
+                TMP_Text t = _sweep[i];
+                if (t != null) _sweep[w++] = t;
+            }
+            if (w < _sweep.Count) _sweep.RemoveRange(w, _sweep.Count - w);
+            _sweepNulls = 0;
+            if (!silent || _sweepCursor > _sweep.Count) _sweepCursor = 0;
         }
 
         /// <summary>判定 + 修复一个对象；救回来了就记一行日志。</summary>
@@ -671,13 +754,21 @@ namespace NuclearOptionChineseLocalizationPatch
         /// 登记一个「刚被翻译过」的文本对象，让即时自愈通道下一帧检查它。
         ///
         /// <para>为什么需要：TMP 的纵向溢出 + Ellipsis 会把整条中文清零（见
-        /// <see cref="RepairStuck"/>），而这类对象往往在用户打开菜单时才出现，
-        /// 全量扫描的组件缓存要 2 秒才刷一次，等不起。
-        /// 这里只做一次 List 追加 + HashSet 去重，开销可忽略。</para>
+        /// <see cref="RepairStuck"/>），而这类对象往往在用户打开菜单时才出现。</para>
+        ///
+        /// <para>同时做另外两件 O(1) 的事，用来替掉两个周期性全内存枚举：
+        /// ① 进滚动自愈名单（原来每 2 秒 <c>FindObjectsOfTypeAll</c> 刷一次）；
+        /// ② 给**这条文本实际使用的字体**补挂中文回退（原来也是每 2 秒枚举全部字体资产）。</para>
         /// </summary>
         internal static void NotifyLocalized(TMP_Text t)
         {
             if (t == null) return;
+
+            // ★ 这两件事必须对**每一次命中**都做（不受下面 pending 去重影响）：
+            //   池化标签会反复复用同一实例，pending 里已经排着它时也要保证名单和回退链是齐的。
+            AddSweepTarget(t);
+            Resources.CjkFontProvider.EnsureFallback(t);
+
             int id = t.GetInstanceID();
             if (_pending.Count > 2000) return;          // 极端情况下的保险丝
             if (!_pendingIds.Add(id)) return;
@@ -811,7 +902,9 @@ namespace NuclearOptionChineseLocalizationPatch
             // 强制重建：这是宿主最主要的复活点，不能被防抖挡掉。
             Hosting.PluginHost.Ensure(force: true);
             Hosting.PluginHost.ResetScanBackoff();
-            CjkFontProvider.Register();
+            // 场景加载＝一次允许的全量字体扫描（加载画面里，代价可接受）；
+            // 运行期不再周期枚举字体资产，改由 EnsureFallback 在翻译命中时 O(1) 补挂。
+            CjkFontProvider.ForceScan();
             ScanScene();
         }
 

@@ -43,8 +43,6 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
         /// <summary>空闲退避的上限：间隔最多放大到基础的 2³ = 8 倍。</summary>
         private const int MaxBackoffShift = 3;
 
-        /// <summary>鼠标按住期间轮询「松手了没」的间隔。</summary>
-        private const float DragRecheckSeconds = 0.25f;
 
         private float _nextScanTime;
 
@@ -120,16 +118,27 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
         private void Update()
         {
             RuntimeStatus.HostAlive = true;
+            // 卡顿取证：先结算**上一帧**（含它的 LateUpdate），再清空本帧的计时槽。
+            // 必须在任何作业之前 —— 否则本帧的作业会覆盖掉上一帧的读数。
+            FrameWatch.FrameStart(Time.unscaledDeltaTime);
+
             // 性能探针的时间基准与帧节奏（默认关；关闭时本调用立即返回，只剩一次静态布尔判断）。
             // 分配的逐帧采样与帧计数也在这一次调用里顺带完成 —— 请勿移到别处或改成条件调用，
             // 否则「B/帧」这个视角会失真。
             PerfProbe.FrameTick(Time.realtimeSinceStartup);
             HandleHotkeys();
-            // 滚动自愈：每帧只查 40 个文本组件，几百毫秒覆盖全场景，
-            // 让「打开菜单才出现的中文整条不显示」在 1 秒内被救回来，
-            // 而不是等 10 秒一次的定时巡检。正常界面上早退开销为零（只在字符数为 0 时才往下走）。
+
+            // 滚动自愈：每帧只查 40 个登记过的文本组件，几百毫秒覆盖一遍，
+            // 让「打开菜单才出现的中文整条不显示」在 1 秒内被救回来。
+            // 正常界面上早退开销为零（只在字符数为 0 时才往下走）。
+            long sweepStart = FrameWatch.Begin();
             LocalizationPlugin.ScanBlankSlice();
+            FrameWatch.End(FrameWatch.Job.Sweep, sweepStart);
+
+            long periodicStart = FrameWatch.Begin();
             HandleScan();
+            FrameWatch.End(FrameWatch.Job.Periodic, periodicStart);
+
             LocalizationPlugin.MissLog?.FlushIfDue();
         }
 
@@ -141,7 +150,9 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
         /// </summary>
         private void LateUpdate()
         {
+            long start = FrameWatch.Begin();
             LateTick?.Invoke();
+            FrameWatch.End(FrameWatch.Job.Rewrite, start);
         }
 
         /// <summary>
@@ -170,15 +181,22 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
 
         private void HandleScan()
         {
+            // ★ 拖动视角 / 拖拽 UI 期间一律不做周期性重活（**包括下面的空白巡检**）。
+            //   原来这个守卫只挡兜底扫描，而真正每 2 秒跑一次的空白巡检绕过了它 ——
+            //   那正是「拖动视角每隔几秒卡一下」的来源（详见 RunBlankReport 的注释）。
+            //   按住期间什么都不做，松开后立刻补一轮（_nextBlankCheck 停在过去）。
+            if (Input.GetMouseButton(0) || Input.GetMouseButton(1) || Input.GetMouseButton(2)) return;
+
             // —— 一次性空白文本巡检：与「兜底扫描」开关无关 ——
             // 实机里兜底扫描默认是关的，把它挂在 HandleScan 的开关之后等于永不执行。
-            // 这里放开关之前，限次数（20 次 × 2 秒 = 40 秒窗口），跑完自动停。
+            // 这里放开关之前，限次数（20 次 × 2 秒 = 40 秒窗口），跑完转低频。
             if (Time.realtimeSinceStartup >= _nextBlankCheck)
             {
-                // 固定 2 秒：这一轮现在只负责「刷新文本组件缓存 + 补挂字体回退」，
-                // 真正的诊断报告在里面每 5 轮（≈10 秒）才做一次。
-                // 刷新快一点，滚动自愈才能尽快看到新打开菜单里的标签。
-                _nextBlankCheck = Time.realtimeSinceStartup + 2f;
+                // 前 40 秒 2 秒一次（覆盖进场景那阵 + 用户开菜单）；之后 10 秒一次长期低频。
+                // 这一轮已经**不做任何全内存枚举**了（名单靠翻译命中登记），
+                // 所以低频阶段的基本等于零成本。
+                float period = LocalizationPlugin.BlankWarmup ? 2f : 10f;
+                _nextBlankCheck = Time.realtimeSinceStartup + period;
                 LocalizationPlugin.RunBlankReport();
             }
 
@@ -197,17 +215,9 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
                 _idleScans = 0;
             }
 
-            // ★ 拖动视角 / 拖拽 UI 时不扫描。兜底扫描用的是 FindObjectsOfTypeAll
-            //   （场景 + 所有已加载资产的全内存枚举），一次几毫秒到几十毫秒；
-            //   正在拖自由视角时，它表现为画面每隔一个扫描间隔跳一下。
-            //   按住期间只做这三次廉价的按键轮询，松开后很快自动补扫，
-            //   拖动期间新出现的文本也只延迟到松手那一刻。
-            if (Input.GetMouseButton(0) || Input.GetMouseButton(1) || Input.GetMouseButton(2))
-            {
-                if (Time.realtimeSinceStartup < _nextScanTime) return;
-                _nextScanTime = Time.realtimeSinceStartup + DragRecheckSeconds;
-                return;
-            }
+            // 拖动视角 / 拖拽 UI 时已经在方法开头整段退出（连空白巡检一起挡掉）。
+            // 兜底扫描用的是 FindObjectsOfTypeAll（场景 + 所有已加载资产的全内存枚举），
+            // 一次几毫秒到几十毫秒 —— 那个守卫是它当初的专属，现在改成共用的了。
 
             // 空闲退避：连续空手扫描（什么都没翻到）就把间隔逐次翻倍，上限 ×8。
             // 界面稳定时从「每秒一次全内存枚举」降到最多 8 秒一次；
