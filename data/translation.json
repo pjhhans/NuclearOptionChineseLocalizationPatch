@@ -274,6 +274,7 @@
   ": the feed, the card and the stick follow the link.": "：画面、卡片与操纵随链路切换。",
   ": the held value; the hold flies to it.": "：保持值；保持模式会飞向该值。",
   "; SAVE starts a new file": "；点击 SAVE 将新建文件",
+  "; commands wait for a fresh report": "；命令需等待新报告",
   "; until then SUPPLY FIT offers AUTO and YOUR LOADOUT.": "创建模板；在此之前，补给配装只提供自动和你的挂载。",
   "; until then the station launches empty.": "；在此之前该挂点空载出击。",
   "; up to": "；最多保留",
