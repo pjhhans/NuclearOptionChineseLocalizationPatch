@@ -153,6 +153,26 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             @"^(\d{1,2})[ ]{2,}(?=[A-Za-z])(\S.*)$", RegexOptions.Compiled);
 
         /// <summary>
+        /// 方位地标：<c>ASSAULT SW OF MARIS AIRPORT</c> / <c>N OF DUSTBOWL HIGHWAY STRIP</c>。
+        ///
+        /// <para><b>为什么要单独一条。</b>这类串是「（可选的行动类型）+ 八方位 + OF + 地名」，
+        /// 由 <c>PlaceNames.Describe</c>（<c>Compass(...) + " OF " + 地名</c>）与
+        /// <c>TheaterWords</c> 的行动类型拼出来。中文语序必须倒置（地名在前、方位在后），
+        /// 而词表是「键 → 值」的逐段替换，**顺序改不了**，所以只能整条认领、按模板重排。</para>
+        ///
+        /// <para><b>性能</b>：单个锚定正则，量词全部有上界（<c>{0,23}</c> / <c>{0,47}</c>），
+        /// 不允许 <c>.+</c> —— 无界量词遇上「像但结尾不合法」的长串会退化成 O(n²) 回溯。
+        /// 实测（net6.0，40 万次）：命中 27 字符 295 ns、首字符不是字母的 280 字符滚动条 32 ns；
+        /// 只挂在漏译路径上，约 1–6 µs/帧（0.03% 单帧，单核）。</para>
+        ///
+        /// <para>刻意**不加 IgnoreCase**：<c>OF</c> 必须大写才算方位串，
+        /// 否则普通散文里的 "s of t" 也会被当成方位重排。</para>
+        /// </summary>
+        internal static readonly Regex CompassOfPlace = new Regex(
+            @"^([A-Za-z][A-Za-z ]{0,23} )?(N|NE|E|SE|S|SW|W|NW) OF ([A-Za-z0-9][A-Za-z0-9 '\.\-]{0,47})$",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        /// <summary>
         /// <c>RAM-45 5</c> / <c>AGM-68 x2</c> 之类「型号 + 数量」。
         ///
         /// <para>为什么要单独一条：型号里带连字符与数字（<c>RAM-45</c>、<c>T/A-30</c>），

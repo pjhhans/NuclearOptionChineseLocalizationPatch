@@ -565,6 +565,57 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// （即便最终没翻出中文），此时**不应**再记入漏译 —— 前缀已经单独记过了，
         /// 重复记会让漏译清单里全是截断的碎片。</para>
         /// </summary>
+        /// <summary>八方位 → 中文方位后缀。<c>N</c> 用「以北」而不是「北」，读起来是"某地以北"。</summary>
+        private static string CompassSuffix(string octant)
+        {
+            switch (octant)
+            {
+                case "N": return "以北";
+                case "NE": return "东北";
+                case "E": return "以东";
+                case "SE": return "东南";
+                case "S": return "以南";
+                case "SW": return "西南";
+                case "W": return "以西";
+                case "NW": return "西北";
+                default: return null;
+            }
+        }
+
+        /// <summary>
+        /// 方位地标语序重排：<c>ASSAULT SW OF MARIS AIRPORT</c> → <c>MARIS AIRPORT 西南突击</c>。
+        ///
+        /// <para>返回 null 表示「这条不认领」，让调用方继续走别的尾缀模式。
+        /// 判据刻意保守：<b>事件类型（组 1）没译出来就整条不动</b> ——
+        /// 宁可整句保持英文，也不要产出"马里机场西南 STRIKE"这种半中半英。</para>
+        /// </summary>
+        private string CompassReorder(Match m, string scope)
+        {
+            string suffix = CompassSuffix(m.Groups[2].Value);
+            if (suffix == null) return null;
+
+            string place = m.Groups[3].Value.Trim();
+            if (place.Length == 0) return null;
+
+            string head = m.Groups[1].Value.Trim();
+            string headPart = string.Empty;
+            if (head.Length > 0)
+            {
+                string headTrans = Localize(head, scope);
+                if (headTrans == head) return null;
+                headPart = headTrans;
+            }
+
+            // 地名本身可能已被词表覆盖（本体的机场/城镇名），递归查一次即可；
+            // 查不到就保持英文，位置照样重排 —— 「X 以北」比「N OF X」好读。
+            string placePart = Localize(place, scope);
+
+            // 地名末尾是拉丁字母/数字时补一格空格，避免 "AIRPORT西南突击" 挤在一起
+            char last = placePart[placePart.Length - 1];
+            bool latinTail = (last >= 'A' && last <= 'Z') || (last >= 'a' && last <= 'z') || (last >= '0' && last <= '9');
+            return placePart + (latinTail ? " " : string.Empty) + suffix + headPart;
+        }
+
         private string ApplyTailPatterns(string text, out bool handled, string scope)
         {
             handled = false;
@@ -585,6 +636,21 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     return text.Substring(0, nline.Groups[2].Index) + bodyTrans;
                 }
                 return text;
+            }
+
+            // 方位地标（"SW OF MARIS AIRPORT" / "ASSAULT SW OF MARIS AIRPORT"）。
+            // 中文语序是「地名 + 方位 + 事件」，与英文**相反**，靠键值替换做不到，
+            // 只能整条认领后重排。放在编号行之后、费用尾缀之前：判据要求八方位全大写，
+            // 比后面那些数值规则更窄，先认领不会抢走别人的串。
+            Match cp = TokenPatterns.CompassOfPlace.Match(text);
+            if (cp.Success)
+            {
+                string reordered = CompassReorder(cp, scope);
+                if (reordered != null)
+                {
+                    handled = true;
+                    return reordered;
+                }
             }
 
             // 补给战报的费用归因尾缀（"Rearmed … - cost: $45.3k by Munitions Bunker" 里
