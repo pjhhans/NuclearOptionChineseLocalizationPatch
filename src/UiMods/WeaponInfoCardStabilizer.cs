@@ -88,6 +88,11 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
             public float FittedRightContent = -1f; // 上次描述让位所依据的右格内容宽（变更才重算）
             public float LastFitTime = -999f;      // 上次描述重算的 unscaledTime（配冷却用）
 
+            // —— 换武器识别：悬停切换的速度远快于冷却，必须有一条不受冷却约束的通道 ——
+            public TMP_Text DescComp;   // 描述控件（逐帧读 text 用，避免每帧 GetComponent）
+            public string LastDescText; // 上次看到的描述文本引用（ReferenceEquals 判定，零分配）
+            public int LastIconId;      // 上次武器图标的 sprite instanceID（换武器必变）
+
             // —— 描述滚动视图：钉死矩形的作用对象从 desc 移交 Viewport ——
             public RectTransform Viewport;   // 视口（钉死矩形 + RectMask2D 裁剪）
             public RectTransform Scrollbar;  // 滚动条背景（视口右缘内侧）
@@ -260,12 +265,41 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
                         ForceDescWrap(desc);
                 }
 
+                // —— 换武器：绕过冷却立即重排 ——
+                // 悬停切导弹时玩家移动鼠标的速度远快于冷却时间，靠「右格内容宽变化 + 冷却」
+                // 判定会让详情卡在上一件武器的排版上。换武器有两个可靠信号：
+                //   ① 武器图标 sprite 变了（每件武器有独立图集帧）；
+                //   ② 描述文本换成了另一个字符串对象（mod 换武器必重设文本）。
+                // 两者任一命中就立刻重排，并把偏移置零（新武器从顶部读）。
+                if (desc != null)
+                {
+                    if (st.DescComp == null)
+                        st.DescComp = desc.GetComponent<TMP_Text>();
+                    string curText = st.DescComp != null ? st.DescComp.text : null;
+                    int iconId = 0;
+                    if (WeaponInfoCardPatches._weaponImageField?.GetValue(instance) is Image iconNow
+                        && iconNow.sprite != null)
+                        iconId = iconNow.sprite.GetInstanceID();
+
+                    bool iconChanged = st.LastIconId != 0 && iconId != st.LastIconId;
+                    bool textChanged = st.LastDescText != null && !ReferenceEquals(curText, st.LastDescText);
+                    st.LastIconId = iconId;
+                    st.LastDescText = curText;
+
+                    if ((iconChanged || textChanged)
+                        && Time.unscaledTime - st.LastFitTime >= SwapCooldown)
+                    {
+                        st.ScrollOffset = 0f;
+                        FitDescription(id, desc);
+                    }
+                }
+
                 // 右格内容宽变化（极端数值如 15000000kg）→ 描述让位重算；正常数值不动
                 // 死区 + 冷却：右格内容宽在 TMP 重排过程中会抖动（同一张卡连续几帧读到
                 // 144/155/166），旧版用 != 比较 ⇒ 每帧都重算 → 改宽度 → TMP 重排 →
                 // 下一帧又读到新值，形成自激循环。实测日志里描述宽在 572→583→594 间反复，
                 // 帧率被拖到个位数（表现为「开卡即卡死」）。故：变化超过阈值且距上次
-                // 重算超过冷却时间才动手。
+                // 重算超过冷却时间才动手。换武器走上面那条独立通道，不受这里的冷却约束。
                 if (desc != null
                     && WeaponInfoCardTable.Geom.TryGetValue(id, out TableGeom tgx))
                 {
@@ -743,10 +777,21 @@ namespace NuclearOptionChineseLocalizationPatch.UiMods
         private const float DescGap = 26f;
 
         /// <summary>右格内容宽的重算死区（px）。TMP 重排过程中的抖动多在此之内。</summary>
-        private const float RightContentEpsilon = 2f;
+        private const float RightContentEpsilon = 4f;
 
-        /// <summary>同一实例描述重算的最小间隔（秒），防止逐帧自激。</summary>
-        private const float FitCooldown = 0.25f;
+        /// <summary>
+        /// 同一实例描述重算的最小间隔（秒），防止逐帧自激。
+        /// 只约束「内容宽抖动」这条通道；换武器走独立通道，不受它限制，
+        /// 因此这里可以从 0.25s 收紧到 0.10s（约 6 帧）而不重新引入卡死。
+        /// </summary>
+        private const float FitCooldown = 0.10f;
+
+        /// <summary>
+        /// 换武器重排的最小间隔（秒，约 3 帧）。这不是「冷却」，是防呆：
+        /// mod 某些路径会每帧用一个新字符串对象重设同一段文本，
+        /// 只靠 <c>ReferenceEquals</c> 会把它当成一直在换武器。3 帧对玩家无感。
+        /// </summary>
+        private const float SwapCooldown = 0.05f;
 
         /// <summary>描述右移比例：屏幕宽 × 此比例（用户裁决 2~4%，取中 3%）。</summary>
         private const float DescShiftRatio = 0.03f;
