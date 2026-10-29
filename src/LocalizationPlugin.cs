@@ -274,7 +274,7 @@ namespace NuclearOptionChineseLocalizationPatch
         {
             if (t == null || !t.gameObject.activeInHierarchy) return;
 
-            string s = t.text;
+            string s = DisplayText(t);
             if (string.IsNullOrEmpty(s) || s.Length > 200) return;
             char firstCjk = FirstCjk(s);
             if (firstCjk == '\0') return;
@@ -311,6 +311,72 @@ namespace NuclearOptionChineseLocalizationPatch
                     after.x, after.y, before.x, before.y));
             }
         }
+
+        /// <summary>
+        /// 读**真正上屏**的文本。
+        ///
+        /// <para><b>为什么不能直接用 <c>t.text</c>。</b>本插件把 <c>TMP_Text.text</c> 的 getter
+        /// 改写成返回**英文原文**（<see cref="Patching.TmpPatches.TextGetterPostfix"/> →
+        /// <c>RestoreOriginalOnRead</c>）。巡检要是读 <c>t.text</c>，拿到的永远是英文，
+        /// 汉字一个都找不到 —— 于是「有中文却渲染为空」这条判据**一条都不会命中**，
+        /// 自愈也永远不会触发。这正是 2026-10-29 那一轮「巡检说没问题、界面还是空」的原因。</para>
+        ///
+        /// <para>真正上屏的是 <c>m_text</c>（setter 补丁是 Prefix，只换入参，
+        /// 原文 setter 照常把它写进 <c>m_text</c>）。取不到时退回 <c>textInfo</c> 里已解析的字符。</para>
+        /// </summary>
+        private static string DisplayText(TMP_Text t)
+        {
+            try
+            {
+                if (_mTextField == null)
+                {
+                    _mTextField = typeof(TMP_Text).GetField("m_text",
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                }
+                if (_mTextField != null)
+                {
+                    string v = _mTextField.GetValue(t) as string;
+                    if (!string.IsNullOrEmpty(v)) return v;
+                }
+            }
+            catch { /* 反射失败就走下面的退路 */ }
+
+            var info = t.textInfo;
+            if (info != null && info.characterCount > 0)
+            {
+                var sb = new System.Text.StringBuilder(info.characterCount);
+                for (int i = 0; i < info.characterCount; i++) sb.Append(info.characterInfo[i].character);
+                return sb.ToString();
+            }
+            return t.text;
+        }
+
+        private static System.Reflection.FieldInfo _mTextField;
+
+        /// <summary>对象自带的材质页清单（TMP 把回退字体当第二页塞进这里）。</summary>
+        private static string MaterialsOf(TMP_Text t)
+        {
+            try
+            {
+                if (_mMatField == null)
+                {
+                    _mMatField = typeof(TMP_Text).GetField("m_sharedMaterials",
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                }
+                var list = _mMatField != null ? _mMatField.GetValue(t) as System.Collections.Generic.List<Material> : null;
+                if (list == null) return "?";
+                var sb = new System.Text.StringBuilder();
+                for (int i = 0; i < list.Count && i < 4; i++)
+                {
+                    if (i > 0) sb.Append(" | ");
+                    sb.Append(list[i] != null ? list[i].name : "<null>");
+                }
+                return list.Count + " 页[" + sb + "]";
+            }
+            catch { return "?"; }
+        }
+
+        private static System.Reflection.FieldInfo _mMatField;
 
         private static char FirstCjk(string s)
         {
@@ -350,9 +416,9 @@ namespace NuclearOptionChineseLocalizationPatch
             TMP_FontAsset fa = t.font;
             int fb = (fa != null && fa.fallbackFontAssetTable != null) ? fa.fallbackFontAssetTable.Count : -1;
             bool hasGlyph = fa != null && fa.HasCharacter(firstCjk);
-            Log.Info(string.Format("[空白文本]   字体 {0}（回退链 {1} 个，含「{2}」={3}） material={4} 溢出模式={5} 自动换行={6} 字号={7:F0}",
+            Log.Info(string.Format("[空白文本]   字体 {0}（回退链 {1} 个，含「{2}」={3}）材质 {4} 已画字符 {5} 溢出模式={6} 自动换行={7} 字号={8:F0}",
                 fa != null ? fa.name : "<null>", fb, firstCjk, hasGlyph ? "是" : "否",
-                t.fontSharedMaterial != null ? t.fontSharedMaterial.name : "<null>",
+                MaterialsOf(t), t.textInfo != null ? t.textInfo.characterCount : -1,
                 (int)t.overflowMode, t.enableWordWrapping, t.fontSize));
             return true;
         }
@@ -416,7 +482,7 @@ namespace NuclearOptionChineseLocalizationPatch
                 {
                     TMP_Text t = all[i];
                     if (t == null || !t.gameObject.activeInHierarchy) continue;
-                    string s = t.text;
+                    string s = DisplayText(t);
                     if (string.IsNullOrEmpty(s) || s.Length > 200) continue;
                     char cjk = FirstCjk(s);
                     if (cjk == '\0') continue;
