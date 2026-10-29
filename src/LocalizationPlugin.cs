@@ -199,6 +199,99 @@ namespace NuclearOptionChineseLocalizationPatch
         /// 以及绕过 setter 直接写字段的路径。它同时是 <see cref="PatchHelpers.LocalizeInPlace"/>
         /// 的驱动源，因此扫描间隔直接决定「新出现的文本多久变中文」。</para>
         /// </summary>
+        private static readonly System.Collections.Generic.HashSet<int> _blankLogged =
+            new System.Collections.Generic.HashSet<int>();
+        private static int _blankBudget = 40;
+        private static int _blankRuns;
+        private const int BlankRuns = 20;
+
+        /// <summary>空白巡检是否还需要跑（与「兜底扫描」开关无关，限 6 次）。</summary>
+        internal static bool BlankReportPending
+        {
+            get { return _blankRuns < BlankRuns && _blankBudget > 0; }
+        }
+
+        /// <summary>
+        /// 驱动一次空白巡检。独立于兜底扫描开关 —— 实机里那个开关是默认关的，
+        /// 挂进 ScanScene 等于永远不执行（第一次部署就踩了这个坑）。
+        /// 只有 6 次机会、每次间隔 2 秒，跑完对长期性能零影响。
+        /// </summary>
+        internal static void RunBlankReport()
+        {
+            if (!BlankReportPending) return;
+            _blankRuns++;
+            try
+            {
+                var all = UnityEngine.Resources.FindObjectsOfTypeAll<TMP_Text>();
+                for (int i = 0; i < all.Length; i++)
+                    ReportBlankText(all[i]);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("空白巡检失败：" + ex.Message);
+            }
+
+            if (!BlankReportPending)
+            {
+                int found = 40 - _blankBudget;
+                Log.Info(found > 0
+                    ? $"[空白文本] 巡检结束：{found} 个组件有中文却没渲染出宽度（明细见上）。"
+                    : "[空白文本] 巡检结束：没有发现「有中文但渲染为空」的组件。");
+            }
+        }
+
+        /// <summary>
+        /// 「有中文却一个字符都没画出来」的巡检。
+        ///
+        /// <para>实机上出现过整块空白：字符串、译文、字形覆盖三者都正常
+        /// （<c>字形覆盖</c> 诊断里每个字都是「＋」= 能动态加进图集），但组件上什么都看不到。
+        /// 这类失败只有两种形状，靠矩形与渲染包围盒就能区分：</para>
+        /// <list type="bullet">
+        /// <item>矩形宽/高为 0 —— 上游排版把宽度算没了（第三方 mod 常按英文宽度排版，
+        /// 中文走 fallback 时 <c>GetPreferredValues</c> 可能返回 0）。</item>
+        /// <item>矩形正常但 <c>textBounds</c> 为 0 —— 文本没被 TMP 生成（解析/溢出模式/材质）。</item>
+        /// </list>
+        /// <para>每个组件只报一次，总预算 40 条，避免刷屏。</para>
+        /// </summary>
+        private static void ReportBlankText(TMP_Text t)
+        {
+            if (_blankBudget <= 0 || t == null || !t.gameObject.activeInHierarchy) return;
+            // 属性变更待重建时 bounds 还是上一轮的旧值（或 0），此时判定会误报。
+            if (t.havePropertiesChanged) return;
+
+            string s = t.text;
+            if (string.IsNullOrEmpty(s) || s.Length > 200) return;
+
+            bool cjk = false;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char ch = s[i];
+                if (ch >= 0x3400 && ch <= 0x9FFF) { cjk = true; break; }
+            }
+            if (!cjk) return;
+
+            RectTransform rt = t.rectTransform;
+            if (rt == null) return;
+            float w = rt.rect.width, h = rt.rect.height;
+            Vector2 bounds = t.textBounds.size;
+            if (w >= 2f && h >= 2f && bounds.x >= 1f) return;
+
+            if (!_blankLogged.Add(t.GetInstanceID())) return;
+            _blankBudget--;
+
+            var path = new System.Text.StringBuilder();
+            Transform cur = rt;
+            for (int depth = 0; depth < 3 && cur != null; depth++)
+            {
+                if (path.Length > 0) path.Append(" < ");
+                path.Append(cur.name);
+                cur = cur.parent;
+            }
+            Log.Info(string.Format("[空白文本] rect {0:F0}x{1:F0} bounds {2:F1}x{3:F1} 路径 {4} 「{5}{6}」",
+                w, h, bounds.x, bounds.y, path,
+                s.Length > 16 ? s.Substring(0, 16) : s, s.Length > 16 ? "…" : ""));
+        }
+
         internal static int ScanScene()
         {
             if (Localizer == null || !Localizer.Enabled) return 0;
@@ -216,7 +309,10 @@ namespace NuclearOptionChineseLocalizationPatch
             {
                 var all = UnityEngine.Resources.FindObjectsOfTypeAll<TMP_Text>();
                 for (int i = 0; i < all.Length; i++)
+                {
                     if (Patching.PatchHelpers.LocalizeInPlace(all[i])) changes++;
+                    ReportBlankText(all[i]);
+                }
 
                 var legacy = UnityEngine.Resources.FindObjectsOfTypeAll<UnityEngine.UI.Text>();
                 for (int i = 0; i < legacy.Length; i++)

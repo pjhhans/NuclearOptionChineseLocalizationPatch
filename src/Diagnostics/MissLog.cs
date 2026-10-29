@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using NuclearOptionChineseLocalizationPatch.Core;
 
 namespace NuclearOptionChineseLocalizationPatch.Diagnostics
 {
@@ -71,7 +72,18 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
             _recent.Enqueue(key.Length <= 52 ? key : key.Substring(0, 52) + "…");
 
             if (!Recording) return;
+            if (IsReadout(fragment)) return;      // 纯读数永远补不出译文，不进清单
             if (_fragments.Add(key)) _dirty = true;
+        }
+
+        /// <summary>
+        /// 纯读数判定（<c>M 0.08 G 0.2</c> / <c>×680</c> / <c>SN A814</c> / <c>▲ 4</c>）。
+        /// 只影响清单、不影响翻译，所以判据可以放宽；但也不能太宽 ——
+        /// <c>4X</c> 这类计数会被一起丢掉，那是可以接受的，它同样没有译文可补。
+        /// </summary>
+        private static bool IsReadout(string fragment)
+        {
+            return TokenPatterns.ReadoutOnly.IsMatch(fragment.Trim());
         }
 
         /// <summary>整段长原文留档 —— 片段清单里的截断文本对不上运行时的键，只能靠它。</summary>

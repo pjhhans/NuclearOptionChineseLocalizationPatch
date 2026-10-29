@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 
 namespace NuclearOptionChineseLocalizationPatch.Core
 {
@@ -39,7 +39,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         ///   <c>▪ ▸</c> —— mod 的次级分隔符（<c>1 VEH G1 ▪ 14.4 KM</c>）。
         /// </summary>
         internal static readonly Regex Delimiter = new Regex(
-            @"(T/A-30|<[^>]+>.*?</[^>]+>|<[^>]+>|--|\s+-\s+|[:/\[\]()|\n\v\t\u00B7\u25AA\u25B8])",
+            @"(T/A-30|<[^>]+>.*?</[^>]+>|<[^>]+>|--|\s+-\s+|[:/\[\]()|\n\v\t\u00B7\u25AA\u25B8\u25B2\u2715])",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
@@ -47,9 +47,26 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// 必须与 <see cref="Delimiter"/> 里「本身没有语义」的那部分逐字一致 ——
         /// 漏一个就会把该符号当成待译片段，记成一条永远补不掉的漏译。
         /// </summary>
-        internal const string LoneDelimiters = ":/[]()|\n\v\t\u00B7\u25AA\u25B8";
+        internal const string LoneDelimiters = ":/[]()|\n\v\t\u00B7\u25AA\u25B8\u25B2\u2715";
 
         // ---------------------------------------------------------------- 噪声
+        /// <summary>
+        /// 纯读数与序号 —— 命中即**不进漏译清单**。
+        ///
+        /// <para>实机跑两小时，<c>missing.json</c> 里 463 条有 85 条是这类东西：
+        /// <c>M 0.08  G 0.2</c>（马赫/过载双读数，一屏就能刷 43 条）、
+        /// <c>×680</c>、<c>SN A814</c>（序列号）、<c>▲ 4</c>。
+        /// 它们永远没有译文可补，却把真缺口淹没在噪声里 ——
+        /// 判断放在 <see cref="Diagnostics.MissLog"/> 的写入侧，只影响记录、不影响翻译。</para>
+        /// </summary>
+        internal static readonly Regex ReadoutOnly = new Regex(
+            @"^(?:(?:M|G)\s*[+\-]?\d+(?:\.\d+)?)(?:\s+(?:M|G)\s*[+\-]?\d+(?:\.\d+)?)*$" +
+            @"|^×\s*\d[\d,]*$" +
+            @"|^SN(?:\s+[0-9A-Fa-f]{2,8})?$" +
+            @"|^[\d.,]+\s*[A-Z°]{0,4}$" +
+            @"|^[\u25B2\u2715]\s*[\d.,]+$",
+            RegexOptions.Compiled);
+
         /// <summary>纯数值 + 短单位：<c>673 km/h</c>、<c>$1.96m</c>。</summary>
         internal static readonly Regex NoiseValueUnit = new Regex(
             @"^[+-]?\s*\$?\d*[\d.]+\s*[a-zA-Z/°%]{0,6}$",
@@ -151,6 +168,38 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// </summary>
         internal static readonly Regex NumberedLine = new Regex(
             @"^(\d{1,2})[ ]{2,}(?=[A-Za-z])(\S.*)$", RegexOptions.Compiled);
+
+        /// <summary>
+        /// <c>3X SPEARHEAD MBT</c> / <c>44% OWN</c> / <c>+35% SUPPORT COST</c> / <c>#1 COVER THE SUPPLY RUN</c>
+        /// —— 数量或百分比**前缀**直接拼进正文。
+        ///
+        /// <para>这类串整条去查表永远差一个数字，而正文本身（<c>SPEARHEAD MBT</c>、
+        /// <c>SUPPORT COST</c>）往往就在词表里。判据刻意收得很窄：前缀只能是
+        /// 「<c>#n</c>」「<c>nX</c>」「<c>[+-]n%</c>」三种形状之一，必须后跟空格，
+        /// 正文首字符不能是数字 —— 免得把 <c>17°C EST</c>、<c>M 0.08 G 0.2</c>
+        /// 这类纯读数也认领进来。</para>
+        /// </summary>
+        internal static readonly Regex QuantityPrefix = new Regex(
+            @"^((?:#\d{1,2}|\d{1,3}[Xx]|[+\-\u2212]?\d{1,3}(?:\.\d+)?%))[ ]+([A-Za-z0-9].*)$",
+            RegexOptions.Compiled);
+
+        /// <summary>
+        /// <c>GUN ×680</c> / <c>AGR-24 ×8</c> / <c>POWER ×1.00</c> —— 乘号（U+00D7）+ 数字的数量后缀。
+        ///
+        /// <para>与已有的 <see cref="QuantitySuffix"/>（<c>Heater x4</c>，拉丁小写 x）是**两种字符**：
+        /// mod 的装弹行用真乘号，并且允许小数（<c>×1.00</c>）。混用一条正则会把
+        /// <c>×1.00</c> 判成不匹配（<c>x\d+</c> 不含小数点），于是同一排读数一半中文一半英文。</para>
+        /// </summary>
+        internal static readonly Regex TimesSuffix = new Regex(
+            @"^(.{1,40}?)\s*×\s*(\d[\d,]*(?:\.\d+)?)$", RegexOptions.Compiled);
+
+        /// <summary>
+        /// <c>2S OLD</c> —— 秒数紧贴 <c>S</c>。词表里已有 <c> S OLD</c> 后缀片段，
+        /// 但它要求数字与 S 之间有一个空格；mod 的倒计时是 <c>Clock(n) + "S OLD"</c> 拼的，
+        /// 没有空格，于是 <c>2S OLD</c> 整条漏掉。
+        /// </summary>
+        internal static readonly Regex SecondsOld = new Regex(
+            @"^(\d{1,4})S OLD$", RegexOptions.Compiled);
 
         /// <summary>
         /// 方位地标：<c>ASSAULT SW OF MARIS AIRPORT</c> / <c>N OF DUSTBOWL HIGHWAY STRIP</c>。

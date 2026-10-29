@@ -118,6 +118,10 @@ SCOPE_GROUPS = {
     "bs": [
         "BS:Caption", "BS:CheckMark", "BS:Label", "BS:Name", "BS:Text",
         "BS:Title", "BS:Value", "BS:Word",
+        # 2026-10-29 新增：mod 航电控制台（AvConsole）的**备选作用域**。
+        # 控制台子树用的是通用节点名（Title/Label），会被本体同名词条串味，
+        # 所以按「BS: + 控制台根节点名」单独成域。见 PatchHelpers.ConsoleScopeOf。
+        "BS:AvConsole WMC",
     ],
     "units": [
         "AircraftName", "AircraftRank", "CounterMeasureName", "countermeasureName",

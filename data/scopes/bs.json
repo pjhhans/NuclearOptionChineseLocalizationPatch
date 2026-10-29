@@ -1,4 +1,5 @@
 {
+  "[BS:AvConsole WMC]WING": "联队",
   "[BS:Caption]POINTS": "点位",
   "[BS:Channel]TWR": "TWR",
   "[BS:CheckMark]OK": "正常",
@@ -28,6 +29,7 @@
   "[BS:Title]BLOCK": "区块",
   "[BS:Title]PUBLIC": "公共",
   "[BS:Title]SPACE": "太空",
+  "[BS:Unit]LAG": "落后",
   "[BS:Value]DOCK": "对接",
   "[BS:Word]DOCK": "对接",
   "[BS:Word]OK": "正常",

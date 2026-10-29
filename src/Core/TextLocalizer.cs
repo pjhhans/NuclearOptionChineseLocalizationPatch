@@ -144,6 +144,12 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         ///
         /// <para><b>性能探针</b>（<see cref="PerfProbe"/>，默认关）：只对<b>最外层</b>那次调用计时，
         /// 得到「一次赋值的固定成本」。关掉探针时 <c>Begin</c> 返回 0，下面整段退化为一次判断。</para>
+        ///
+        /// <para><b>兜底 catch</b>：本地化是**旁挂**能力，任何意外都绝不能抛回游戏代码。
+        /// 一次越界的外抛会打断调用方整条初始化（2026-10-29 实机：TMP set_text 抛异常 →
+        /// <c>AvBayPlate.Set</c> 中断 → <c>AvConsole.Finish</c> 中断 → MFD 面板 install failed，
+        /// 半成品面板留在场景里永不销毁）。所以这里一律吞掉、返回原文、只记一次日志。
+        /// 有 try/catch 但不抛异常时代价≈0（运行时没有额外指令）。</para>
         /// </summary>
         internal string Localize(string text, string scope)
         {
@@ -158,11 +164,51 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 }
                 return result;
             }
+            catch (Exception ex)
+            {
+                // 只在外层记一次（内层只是原样上抛），否则一条文本会刷出十几条日志。
+                if (_depth == 1) NoteFailure(ex, text, scope);
+                return text;
+            }
             finally
             {
                 if (_depth == 1) PerfProbe.End(PerfProbe.Seg.Total, probeTotal);
                 _depth--;
             }
+        }
+
+        /// <summary>已记录的异常种类数（同一个 类型+首行堆栈 只报一次）。</summary>
+        private int _failureKinds;
+
+        /// <summary>累计被兜底吞掉的次数 —— F11 窗口里能看到，非 0 说明流水线仍有未修的洞。</summary>
+        internal long FailureCount { get; private set; }
+
+        private readonly HashSet<string> _failureSeen = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// 记一次流水线异常。同一种（类型 + 首行堆栈）只写一条日志，
+        /// 避免「每帧都炸同一个洞」把 LogOutput 刷爆、把真正的线索淹掉。
+        /// </summary>
+        private void NoteFailure(Exception ex, string text, string scope)
+        {
+            FailureCount++;
+            string stack = ex.StackTrace ?? string.Empty;
+            int cut = stack.IndexOf('\n');
+            string head = cut > 0 ? stack.Substring(0, cut) : stack;
+            string key = ex.GetType().Name + "|" + head;
+            if (_failureKinds >= 20 || !_failureSeen.Add(key)) return;
+            _failureKinds++;
+            Log.Error(
+                "[本地化] 流水线异常已兜底（返回原文）：" + ex.GetType().Name + "：" + ex.Message
+                + "\n  作用域=" + scope + "  原文=" + Fmt(text)
+                + "\n  " + head.Trim());
+        }
+
+        private static string Fmt(string s)
+        {
+            if (s == null) return "<null>";
+            if (s.Length > 120) s = s.Substring(0, 120) + "…";
+            return "\"" + s.Replace("\n", "\\n").Replace("\t", "\\t") + "\"";
         }
 
         private string LocalizeInner(string text, string scope)
@@ -393,9 +439,38 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// 命中后把固定短语换成译文，再**递归翻译剩余部分**（变量可能是单位名等，也需要翻译）。
         /// 没命中返回 null，交给切片逻辑。
         /// </summary>
+        /// <summary>
+        /// 片段递归层数上限。
+        ///
+        /// <para><b>为什么需要这个上限。</b>片段命中后会递归调用 <see cref="Localize"/>，
+        /// 而递归进来的文本**又从头遍历整张片段表**。一旦某个片段在长句里频繁命中
+        /// （典型是 `" IN "`、`" IS "`、`" TO "` 这类通用短词被误当成词缀），
+        /// 每条长句就会展开成 2^深度 次全表扫描 —— 深度上限是 8，等于每条 8×片段数。</para>
+        ///
+        /// <para>2026-10-29 实测事故：片段表被灌入 30 余个通用短词后，
+        /// 进对局瞬间（缓存全冷）数千条文本各展开上千次匹配，帧率塌到个位数，
+        /// 同时文本被改写成半中半英导致界面错位。</para>
+        ///
+        /// <para>两层足够：「后缀 + 中缀 + 主体」这类最常见的三段拼接正好用完两层。
+        /// 超限的文本退回切片，宁可少翻一处，也不让一条文本引爆 CPU。</para>
+        /// </summary>
+        private const int MaxFragmentDepth = 2;
+
+        private int _fragmentDepth;
+
         private string ConcatFragments(string text, string scope)
         {
             if (text.Length < 4) return null;
+            if (_fragmentDepth >= MaxFragmentDepth) return null;
+
+            // 命中后的递归都要走这里：进一层、退一层，异常也不会把计数弄脏。
+            string Recurse(string part)
+            {
+                if (string.IsNullOrEmpty(part)) return part;
+                _fragmentDepth++;
+                try { return Localize(part, scope); }
+                finally { _fragmentDepth--; }
+            }
 
             // 用 &lt; 而不是 &lt;= 做长度判定：整段**恰好就是**固定短语时
             // （"K92 Highway Strip has been captured by "）也要命中，此时剩余为空串，
@@ -406,7 +481,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (string.CompareOrdinal(text, 0, f.Key, 0, f.Key.Length) != 0) continue;
                 // TrimStart：游戏拼串常带多余空格（"Rearmed " + " 100% complete"），
                 // 直接拼进译文会留下难看的空隙。
-                return f.Value + Localize(text.Substring(f.Key.Length).TrimStart(), scope);
+                return f.Value + Recurse(text.Substring(f.Key.Length).TrimStart());
             }
 
             foreach (LocalizationTable.Fragment f in _table.SuffixFragments)
@@ -414,7 +489,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (text.Length < f.Key.Length) continue;
                 int at = text.Length - f.Key.Length;
                 if (string.CompareOrdinal(text, at, f.Key, 0, f.Key.Length) != 0) continue;
-                return Localize(text.Substring(0, at).TrimEnd(), scope) + f.Value;
+                return Recurse(text.Substring(0, at).TrimEnd()) + f.Value;
             }
 
             foreach (LocalizationTable.Fragment f in _table.InfixFragments)
@@ -422,9 +497,9 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (text.Length < f.Key.Length) continue;
                 int at = text.IndexOf(f.Key, StringComparison.Ordinal);
                 if (at < 0) continue;
-                return Localize(text.Substring(0, at), scope)
+                return Recurse(text.Substring(0, at))
                        + f.Value
-                       + Localize(text.Substring(at + f.Key.Length), scope);
+                       + Recurse(text.Substring(at + f.Key.Length));
             }
 
             return null;
@@ -471,6 +546,18 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
                 // ---- 纯文本段
                 string piece = part.Trim();
+
+                // ★★ 纯空白段必须在这里就短路。
+                //   切分是按「分隔符字符」做的，两头带空格是常态：
+                //   `"… · " + 空串 + " · …"`（AvBayPlate 的 `" · " + AvAmbient.Maker + " · "`，
+                //   Maker 为空时）切出来就是一段单独的空格；`"   "` 这种纯缩进同理。
+                //   part 非空 ⇒ 上面的 IsNullOrEmpty 拦不住，Trim 后 piece 却成了空串，
+                //   接下来 `piece[0]` 直接 IndexOutOfRangeException。
+                //   **这个异常会穿透 TMP 的 set_text 抛回调用方**，把整条 UI 构建流程打断 ——
+                //   2026-10-29 实机：BS mod 的 RAD/SQD 之后的 6 个 MFD 面板
+                //   （OPS/MISC/EVN/COM/UAV/WMC）全部 install failed，
+                //   面板半成品留在场景里不销毁，表现为「界面错位 + 有个 w 面板永远挂在屏幕上」。
+                if (piece.Length == 0) continue;
 
                 // ★ 边缘残留标签要先剥掉。
                 //   成对标签的分隔规则是**懒惰**匹配（<[^>]+>.*?</[^>]+>），它只吃到第一个
@@ -636,6 +723,40 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     return text.Substring(0, nline.Groups[2].Index) + bodyTrans;
                 }
                 return text;
+            }
+
+            // 数量/百分比前缀（"3X SPEARHEAD MBT" / "44% OWN" / "+35% SUPPORT COST" / "#1 COVER …"）。
+            // 前缀原样保留、正文递归查表 —— 正文本身通常就有词条，差的只是那个数字。
+            Match qp = TokenPatterns.QuantityPrefix.Match(text);
+            if (qp.Success)
+            {
+                handled = true;
+                string qbody = qp.Groups[2].Value.TrimEnd();
+                string qbodyTrans = Localize(qbody, scope);
+                if (qbodyTrans != qbody)
+                    return qp.Groups[1].Value + text.Substring(qp.Groups[1].Length,
+                                                              qp.Groups[2].Index - qp.Groups[1].Length) + qbodyTrans;
+                return text;
+            }
+
+            // 数量后缀（"GUN ×680" / "AGR-24 ×8" / "POWER ×1.00"）：词在前、读数在后。
+            Match qs = TokenPatterns.TimesSuffix.Match(text);
+            if (qs.Success)
+            {
+                handled = true;
+                string qhead = qs.Groups[1].Value.Trim();
+                string qheadTrans = Localize(qhead, scope);
+                if (qheadTrans != qhead)
+                    return text.Substring(0, qs.Groups[1].Index) + qheadTrans + text.Substring(qs.Groups[1].Index + qs.Groups[1].Length);
+                return text;
+            }
+
+            // 秒数紧贴 S（"2S OLD"）—— 词表里的 ` S OLD` 片段要求有空格，这个形状漏掉。
+            Match so = TokenPatterns.SecondsOld.Match(text);
+            if (so.Success)
+            {
+                handled = true;
+                return so.Groups[1].Value + " 秒前";
             }
 
             // 方位地标（"SW OF MARIS AIRPORT" / "ASSAULT SW OF MARIS AIRPORT"）。

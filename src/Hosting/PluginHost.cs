@@ -48,6 +48,9 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
 
         private float _nextScanTime;
 
+        /// <summary>下次「空白文本巡检」的时刻（独立于兜底扫描开关，限次运行）。</summary>
+        private float _nextBlankCheck;
+
         /// <summary>连续「空手而归」的兜底扫描次数。用于空闲退避。</summary>
         private int _idleScans;
 
@@ -163,6 +166,16 @@ namespace NuclearOptionChineseLocalizationPatch.Hosting
 
         private void HandleScan()
         {
+            // —— 一次性空白文本巡检：与「兜底扫描」开关无关 ——
+            // 实机里兜底扫描默认是关的，把它挂在 HandleScan 的开关之后等于永不执行。
+            // 这里放开关之前，限次数（20 次 × 2 秒 = 40 秒窗口），跑完自动停。
+            if (LocalizationPlugin.BlankReportPending
+                && Time.realtimeSinceStartup >= _nextBlankCheck)
+            {
+                _nextBlankCheck = Time.realtimeSinceStartup + 2f;
+                LocalizationPlugin.RunBlankReport();
+            }
+
             // 兜底扫描默认关闭：周期性的 FindObjectsOfTypeAll 是全内存枚举，
             // 不是每个玩家都愿意为「补丁覆盖不到的少数文本」常年在后台付这笔钱。
             // 场景加载时 OnSceneLoaded 仍会扫一次，保证每关开始时界面是完整的；

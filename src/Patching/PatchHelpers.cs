@@ -147,6 +147,62 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             new System.Text.RegularExpressions.Regex(
                 @"\s*\(\d+\)$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
+        // ---------------------------------------------------------------- 控制台作用域
+
+        /// <summary>
+        /// mod 自建航电控制台（NOAvionics 的 <c>AvConsole</c>）的**备选作用域**，如
+        /// <c>"BS:AvConsole WMC"</c>；不在控制台里则返回 null。
+        ///
+        /// <para><b>为什么需要这一层。</b>控制台整棵子树用的都是 mod 的通用节点名
+        /// （<c>Title</c>/<c>Label</c>/<c>Value</c>…），逐字撞上本体的作用域名。
+        /// 实锤：WMC 中队控制台标题是 <c>AvText.Make(root, "Title", …, "WING")</c>
+        /// （<c>WmcPanel.cs:366</c> 的 <c>AvConsole.Build(content, "WMC", "WING", …)</c>），
+        /// 于是命中挂载界面挂点组那条 <c>[Title]WING = 翼下</c>，控制台标题永远显示「翼下」；
+        /// 五个选项卡同理，<c>Control WING</c> 里的 <c>Label</c> 命中 <c>[label]WING = 机翼</c>。
+        /// 而控制台根节点叫 <c>"AvConsole WMC"</c>、不在 <c>Boscali*</c> 命名空间里，
+        /// 上面那套 <c>BS:</c> 隔离对它不生效。</para>
+        ///
+        /// <para><b>为什么不在 <see cref="ScopeOf"/> 里直接换返回值。</b>那会把整棵子树的叶子
+        /// 作用域一次全换掉，靠叶子名命中的既有译文会一起失效，回归面太大。这里只提供
+        /// 「备选作用域」，由 <see cref="TryLocalize"/> **先精确查它、查不到再走原路** ——
+        /// 只有显式登记过的键才会改变行为，其余逐字不变。</para>
+        ///
+        /// <para><b>成本。</b>按 Transform 缓存（<c>ConditionalWeakTable</c>），每个文本节点
+        /// 一生只向上走一次父链；之后每条文本多一次字典探测（约 30 ns），
+        /// 且只发生在 mod 航电控制台内部（几十个节点），不在 HUD 主路径上。</para>
+        /// </summary>
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Transform, object> ConsoleScopeCache =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<Transform, object>();
+
+        private static string ConsoleScopeOf(Component comp)
+        {
+            if (comp == null || !ModScopeEnabled) return null;
+            Transform t = comp.transform;
+            if (t == null) return null;
+
+            object cached;
+            if (ConsoleScopeCache.TryGetValue(t, out cached)) return cached as string;
+
+            string scope = null;
+            Transform cur = t;
+            // 深度 5：Title 直接挂在根下（1 层）；选项卡标签是 根 > Tabs > Control X > Label（3 层）。
+            for (int depth = 0; depth < 5 && cur != null; depth++)
+            {
+                string n = cur.name;
+                if (n != null && n.Length > 9 && n.StartsWith("AvConsole ", StringComparison.Ordinal))
+                {
+                    int room = 40 - ModScopePrefix.Length;
+                    scope = ModScopePrefix + (n.Length > room ? n.Substring(0, room) : n);
+                    break;
+                }
+                cur = cur.parent;
+            }
+
+            ConsoleScopeCache.Remove(t);
+            ConsoleScopeCache.Add(t, scope ?? (object)No);
+            return scope;
+        }
+
         /// <summary>
         /// 尝试翻译。返回 true 表示应当写回（结果与原文不同且确实含中文）。
         /// </summary>
@@ -166,6 +222,22 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             long probeScope = Diagnostics.PerfProbe.Begin();
             string scope = ScopeOf(comp);
             Diagnostics.PerfProbe.End(Diagnostics.PerfProbe.Seg.ScopeOf, probeScope);
+
+            // mod 航电控制台：先试控制台级作用域（只认精确登记，未登记则原路返回，行为不变）。
+            // 典型是 WMC 的标题与选项卡标签 —— 它们叶子名是 Title/Label，会被本体同名词条串味。
+            string consoleScope = ConsoleScopeOf(comp);
+            if (consoleScope != null)
+            {
+                string consoleHit = LocalizationPlugin.Table.LookupScoped(consoleScope, original);
+                if (consoleHit != null && consoleHit != original && Core.TextLocalizer.HasChinese(consoleHit))
+                {
+                    translated = consoleHit;
+                    Remember(consoleHit, original);
+                    RewriteGuard.Track(comp, original, consoleHit);
+                    Host.NotifyTranslationActivity();
+                    return true;
+                }
+            }
 
             string result = localizer.Localize(original, scope);
             if (result == original || !Core.TextLocalizer.HasChinese(result)) return false;

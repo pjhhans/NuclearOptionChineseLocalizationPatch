@@ -217,7 +217,10 @@ namespace NuclearOptionChineseLocalizationPatch.Ui
 
             Row("运行统计", localizer == null
                 ? "未初始化"
-                : $"命中 {localizer.HitCount} ／ 漏译 {localizer.MissCount} ／ 缓存 {localizer.CacheCount} ／ 放过 {localizer.PassThroughCount}");
+                : $"命中 {localizer.HitCount} ／ 漏译 {localizer.MissCount} ／ 缓存 {localizer.CacheCount} ／ 放过 {localizer.PassThroughCount}"
+                  + (localizer.FailureCount > 0
+                      ? $" ／ ⚠ 流水线异常 {localizer.FailureCount}（已兜底，详见日志）"
+                      : ""));
 
             Row("防回写", $"跟踪 {RewriteGuard.TrackedCount} 个组件，已放弃 {RewriteGuard.GivenUpCount} 个"
                           + (RewriteGuard.Disabled ? "（已停用）" : ""));
