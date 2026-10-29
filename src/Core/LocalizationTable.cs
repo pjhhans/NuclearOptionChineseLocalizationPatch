@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 
@@ -80,6 +80,40 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// <summary>参数化模板实际命中次数（诊断用；仅在命中时累加）。</summary>
         internal int ParamTemplateHits;
 
+        /// <summary>
+        /// 文本通配模板（键含 <see cref="WildMarker"/>，即 <c>{*}</c>）。
+        ///
+        /// <para>动机：第三方 mod 的台词是**运行时拼装**的，模板里写着
+        /// <c>Operation &lt;name&gt;. Phase is now &lt;phase&gt;.</c>，装配后变成
+        /// <c>Operation Maris Airport. Phase is now AWAITING FORCES.</c>。
+        /// 中间那段是任意文本（不是数字，<c>{#}</c> 吃不下），
+        /// 而中文语序与英文不同，靠固定前后缀片段拼接必错 —— 只能整句匹配。</para>
+        ///
+        /// <para><see cref="WildTemplateIndex"/> 按首段前 4 个字符分桶，
+        /// 避免每次都对全表线性扫描（这是 2026-10-29 那次「通用短词片段」事故的教训：
+        /// 任何「逐条尝试」的匹配路径都必须先有索引和门禁）。</para>
+        /// </summary>
+        private readonly Dictionary<string, List<WildTemplate>> _wildByHead =
+            new Dictionary<string, List<WildTemplate>>(StringComparer.Ordinal);
+
+        /// <summary>首段为空（键以 <c>{*}</c> 开头）的模板，数量极少，单独放。</summary>
+        private readonly List<WildTemplate> _wildHeadless = new List<WildTemplate>();
+
+        /// <summary>
+        /// 通配段（<c>{*}</c> 捕获到的那段文本）的译文钩子。
+        ///
+        /// <para>台词里的占位符替换上来的是**英文实值**（<c>Maris Airport</c> /
+        /// <c>AWAITING FORCES</c>），它们本身在词表里有译文。不回译的话，
+        /// 整句会变成「行动 Maris Airport。当前阶段：AWAITING FORCES。」这种半中半英。
+        /// 由 <see cref="TextLocalizer"/> 注入，只做**精确查表**，绝不递归进模板路径。</para>
+        /// </summary>
+        internal Func<string, string> CaptureTranslator;
+
+        /// <summary>文本通配模板条数 / 命中次数（诊断用）。</summary>
+        internal int WildTemplateCount => _wildTemplateCount;
+        internal int WildTemplateHits;
+        private int _wildTemplateCount;
+
         private readonly Dictionary<string, string> _reverse =
             new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -102,7 +136,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// 模板条数：精确模板 + 参数化模板（<c>{#}</c>）。
         /// 两者只是索引不同，都是真实存在于词表、也真能命中的键，计数必须一并算上。
         /// </summary>
-        internal int TemplateCount => _templates.Count + _paramTemplates.Count;
+        internal int TemplateCount => _templates.Count + _paramTemplates.Count + _wildTemplateCount;
         /// <summary>作用域分表里的词条总数（不含分表个数，个数见 <see cref="ScopeCount"/>）。</summary>
         internal int ScopedEntryCount => _scopedEntries;
         /// <summary>
@@ -112,7 +146,8 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// <see cref="StringComparer.OrdinalIgnoreCase"/> 上），所以会略小于词表文件的原始行数。</para>
         /// </summary>
         internal int TotalEntryCount =>
-            _global.Count + _templates.Count + _paramTemplates.Count + FragmentCount + _scopedEntries;
+            _global.Count + _templates.Count + _paramTemplates.Count + _wildTemplateCount
+            + FragmentCount + _scopedEntries;
         /// <summary>可用的去标签指纹条数（撞车作废的不计）。</summary>
         internal int TemplateFingerprintCount
         {
@@ -172,6 +207,8 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             _global.Clear(); _templates.Clear(); _reverse.Clear();
             _templateFingerprints.Clear(); _fingerprintCollisions = 0;
             _paramTemplates.Clear(); ParamTemplateHits = 0;
+            _wildByHead.Clear(); _wildHeadless.Clear();
+            _wildTemplateCount = 0; WildTemplateHits = 0;
             _prefixFragments.Clear(); _suffixFragments.Clear(); _infixFragments.Clear();
             _scoped.Clear(); _scopedEntries = 0; _forceScoped.Clear();
             _globalHasBracketKeys = false;
@@ -229,6 +266,14 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     // 键里的数字位是变化的（如「via Rank ({0})」运行时填等级），
                     // 精确/指纹都对它无能为力。门禁仍用 _minTemplateKeyLength，
                     // 所以这里也要参与最短键长统计（按 {#} 取最短可能 —— 1 位数字）。
+                    if (canonical.IndexOf(WildMarker, StringComparison.Ordinal) >= 0)
+                    {
+                        WildTemplate wt = AddWildTemplate(canonical, value);
+                        if (wt != null && wt.MinLength < _minTemplateKeyLength)
+                            _minTemplateKeyLength = wt.MinLength;
+                        continue;
+                    }
+
                     if (canonical.IndexOf(ParamMarker, StringComparison.Ordinal) >= 0)
                     {
                         AddParamTemplate(canonical, value);
@@ -469,7 +514,19 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     }
                 }
 
-                // ---- 回落二：参数化模板（{#} = 一段数字）。命中即展开成最终译文。
+                // ---- 回落二：文本通配模板（{*} = 任意一段文本）。命中即回填成最终译文。
+                if (_wildTemplateCount > 0)
+                {
+                    string expandedWild = MatchWildTemplates(canonical);
+                    if (expandedWild != null)
+                    {
+                        WildTemplateHits++;
+                        value = expandedWild;
+                        return true;
+                    }
+                }
+
+                // ---- 回落三：参数化模板（{#} = 一段数字）。命中即展开成最终译文。
                 if (_paramTemplates.Count > 0)
                 {
                     string expanded = MatchParamTemplates(canonical);
@@ -505,6 +562,13 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// </summary>
         internal const string ParamMarker = "{#}";
 
+        /// <summary>
+        /// 文本通配占位符：键里的 <c>{*}</c> 表示「这里是一段**任意文本**」，
+        /// 译文里用 <c>{0}</c> <c>{1}</c> … 按出现顺序回填。
+        /// 与 <see cref="ParamMarker"/>（只吃数字）互补，见 <see cref="AddWildTemplate"/>。
+        /// </summary>
+        internal const string WildMarker = "{*}";
+
         /// <summary>键按 1 位数字展开后的最短可能长度（供模板路径的门禁）。</summary>
         private static int ParamMinLength(string canonical)
         {
@@ -530,6 +594,156 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             }
 
             _paramTemplates.Add(new ParamTemplate(segments, value, ParamMinLength(canonical)));
+        }
+
+        /// <summary>
+        /// 注册一条文本通配模板。键形如 <c>Operation {*}. Phase is now {*}.</c>，
+        /// 译文用 <c>{0}</c>/<c>{1}</c> 回填。
+        ///
+        /// <para><b>加载期校验（不合法直接丢弃，宁可漏翻也不翻错）</b>：</para>
+        /// <list type="bullet">
+        /// <item>必须至少一个 <c>{*}</c>；</item>
+        /// <item>每个 <c>{*}</c> 至少吃 1 个字符，所以 <c>MinLength = 固定段总长 + 通配个数</c>；</item>
+        /// <item>译文必须逐个引用 <c>{0}</c>…<c>{n-1}</c> —— 少引用就意味着把运行时值丢了，
+        /// 那种「半句中文 + 少了主角」的译文比不翻更糟。</item>
+        /// </list>
+        /// </summary>
+        private WildTemplate AddWildTemplate(string canonical, string value)
+        {
+            string[] segments = canonical.Split(new[] { WildMarker }, StringSplitOptions.None);
+            if (segments.Length < 2) return null;
+
+            int captures = segments.Length - 1;
+            for (int i = 0; i < captures; i++)
+            {
+                if (!value.Contains("{" + i + "}")) return null;   // 漏引用运行时值
+            }
+
+            var wt = new WildTemplate(segments, value);
+            wt.Owner = this;
+            _wildTemplateCount++;
+
+            string head = segments[0];
+            if (head.Length == 0)
+            {
+                _wildHeadless.Add(wt);
+            }
+            else
+            {
+                string key = head.Length > WildHeadLength ? head.Substring(0, WildHeadLength) : head;
+                List<WildTemplate> list;
+                if (!_wildByHead.TryGetValue(key, out list))
+                {
+                    list = new List<WildTemplate>(2);
+                    _wildByHead[key] = list;
+                }
+                list.Add(wt);
+            }
+            return wt;
+        }
+
+        /// <summary>分桶用的首段前缀长度。4 个字符足够把 6 百多条台词摊薄，也不会漏掉短前缀的键。</summary>
+        private const int WildHeadLength = 4;
+
+        private string MatchWildTemplates(string canonical)
+        {
+            // ★ 顺序：**先查有固定前缀的**，再查首段为空的兜底。
+            //   反过来的话，`~{*}. Phase is now {*}.` 会把
+            //   「Operation Maris Airport. Phase is now AWAITING FORCES.」
+            //   整句吃成「Maris Airport。当前阶段：…」，丢掉「行动」两个字（实测踩过）。
+            int max = canonical.Length < WildHeadLength ? canonical.Length : WildHeadLength;
+            for (int len = max; len >= 1; len--)
+            {
+                List<WildTemplate> list;
+                if (!_wildByHead.TryGetValue(canonical.Substring(0, len), out list)) continue;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    string r = list[i].Match(canonical);
+                    if (r != null) return r;
+                }
+            }
+
+            // 首段为空的（键以 {*} 开头）无法分桶，只能逐条试 —— 数量靠 check_data 压到个位数。
+            for (int i = 0; i < _wildHeadless.Count; i++)
+            {
+                string r = _wildHeadless[i].Match(canonical);
+                if (r != null) return r;
+            }
+            return null;
+        }
+
+        /// <summary>文本通配模板：固定段 + 每段之间一段任意文本。见 <see cref="AddWildTemplate"/>。</summary>
+        private sealed class WildTemplate
+        {
+            internal readonly string[] Segments;
+            internal readonly string Value;
+            internal readonly int MinLength;
+
+            /// <summary>
+            /// 所属表。通配段译文钩子（<see cref="LocalizationTable.CaptureTranslator"/>）
+            /// 是 <b>载入之后</b> 由 TextLocalizer 注入的，所以这里只能存表引用、
+            /// 匹配时再取 —— 注册那一刻取的话永远是 null（踩过一次）。
+            /// </summary>
+            internal LocalizationTable Owner;
+
+            internal WildTemplate(string[] segments, string value)
+            {
+                Segments = segments;
+                Value = value;
+                int fixedLen = 0;
+                for (int i = 0; i < segments.Length; i++) fixedLen += segments[i].Length;
+                MinLength = fixedLen + (segments.Length - 1);
+            }
+
+            internal string Match(string canonical)
+            {
+                int n = Segments.Length;
+                if (canonical.Length < MinLength) return null;
+
+                string head = Segments[0];
+                if (head.Length > 0 && !canonical.StartsWith(head, StringComparison.Ordinal)) return null;
+
+                string tail = Segments[n - 1];
+                if (tail.Length > 0)
+                {
+                    if (canonical.Length - tail.Length < head.Length) return null;
+                    if (string.CompareOrdinal(canonical, canonical.Length - tail.Length, tail, 0, tail.Length) != 0)
+                        return null;
+                }
+
+                int pos = head.Length;
+                int end = canonical.Length - tail.Length;
+                if (end - pos < n - 1) return null;              // 每个通配至少 1 个字符
+
+                string[] caps = new string[n - 1];
+                for (int i = 1; i < n - 1; i++)
+                {
+                    string seg = Segments[i];
+                    int at = seg.Length == 0 ? pos : canonical.IndexOf(seg, pos, end - pos, StringComparison.Ordinal);
+                    if (at < 0) return null;
+                    if (at <= pos) return null;                  // 通配段不能为空
+                    caps[i - 1] = canonical.Substring(pos, at - pos);
+                    pos = at + seg.Length;
+                }
+                if (end <= pos) return null;
+                caps[n - 2] = canonical.Substring(pos, end - pos);
+
+                // 通配段里出现换行说明匹配跨了行 —— 台词都是单行，跨行必有误。
+                for (int i = 0; i < caps.Length; i++)
+                {
+                    if (caps[i].IndexOf('\n') >= 0 || caps[i].IndexOf('\r') >= 0) return null;
+                }
+
+                Func<string, string> tr = Owner != null ? Owner.CaptureTranslator : null;
+                string result = Value;
+                for (int i = 0; i < caps.Length; i++)
+                {
+                    string cap = caps[i];
+                    if (tr != null) cap = tr(cap);
+                    result = result.Replace("{" + i + "}", cap);
+                }
+                return result;
+            }
         }
 
         private string MatchParamTemplates(string canonical)

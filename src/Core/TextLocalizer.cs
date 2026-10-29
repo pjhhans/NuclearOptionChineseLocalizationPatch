@@ -115,6 +115,9 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         internal TextLocalizer(LocalizationTable table, ExclusionRules exclusions, MissLog missLog)
         {
             _table = table;
+            // 通配模板捕获到的实值（如 "Maris Airport" / "AWAITING FORCES"）也要出中文，
+            // 否则整句会半中半英。只走精确查表，不递归模板 —— 递归会放大成本且容易自激。
+            _table.CaptureTranslator = TranslateCapture;
             _exclusions = exclusions;
             _missLog = missLog;
         }
@@ -151,6 +154,30 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// 半成品面板留在场景里永不销毁）。所以这里一律吞掉、返回原文、只记一次日志。
         /// 有 try/catch 但不抛异常时代价≈0（运行时没有额外指令）。</para>
         /// </summary>
+        /// <summary>
+        /// 通配段（<c>{*}</c> 捕获到的运行时实值）回译。
+        ///
+        /// <para>顺序：<b>结构化格式先转</b>（BRA 方位报读、钟点方位、跑道号），
+        /// 再走<b>精确查表</b>（<c>Maris Airport</c> → 马里斯机场、
+        /// <c>AWAITING FORCES</c> → 等待部队）。两条都不命中就原样返回 ——
+        /// 呼号、玩家名这类本来就不该动。</para>
+        ///
+        /// <para><b>为什么结构化优先。</b>台词里的 <c>&lt;bra&gt;</c> 是
+        /// <c>Core/Math/Bra.cs</c> 拼出来的 <c>BRA 090, 40 kilometres, 1500 metres, hot</c>，
+        /// 每次数字都不同，永远不可能有精确键；它占 118 条台词，不做规则就等于 118 条半中半英。
+        /// <c>&lt;clock&gt;</c> 同理（<c>three o'clock</c>）。</para>
+        /// </summary>
+        private string TranslateCapture(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+
+            string structured = CaptureRules.Convert(s);
+            if (structured != null) return structured;
+
+            string hit = _table.LookupGlobal(s);
+            return hit ?? s;
+        }
+
         internal string Localize(string text, string scope)
         {
             _depth++;

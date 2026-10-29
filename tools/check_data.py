@@ -352,6 +352,47 @@ def check_template_canonical_duplicates(table):
             note("模板键归一化后重复（译文相同，仅冗余）: %r" % sorted(keys))
 
 
+WILD_MARKER = '{*}'
+
+
+def check_wild_templates(table):
+    """`{*}` 文本通配模板的三条硬约束。
+
+    运行时规则（LocalizationTable.AddWildTemplate / WildTemplate.Match）：
+      * 每个 `{*}` 至少吃 1 个字符，所以最短长度 = 固定段总长 + 通配个数；
+      * 译文必须**逐个**引用 `{0}`…`{n-1}` —— 少引用就等于把运行时值丢了，
+        「半句中文 + 少了主角」比不翻更糟，运行时直接拒收该键；
+      * 首段为空的键（`~{*}` 开头）无法按前缀分桶，只能逐条试。
+        台词里「<who> is down.」这类**占位符在句首**的句子天然如此，压不到个位数，
+        所以这里只管别失控：每条先比尾段（常数级，绝大多数当场退出），
+        34 条实测 ~0.4 µs/条文本，只作用于「精确/指纹都没命中的那部分文本」。
+    """
+    headless = []
+    bad = []
+    for key, value in table.items():
+        if kind_of(key) != KIND_TEMPLATE or WILD_MARKER not in key:
+            continue
+        raw = key[1:]
+        n = raw.count(WILD_MARKER)
+        used = set(int(x) for x in re.findall(r'\{(\d+)\}', value or ''))
+        if used != set(range(n)):
+            bad.append((key, sorted(used), n))
+        for seg in raw.split(WILD_MARKER)[1:]:
+            if seg.strip()[:1].isdigit():
+                bad.append((key, 'fixed-segment-starts-with-digit', seg[:12]))
+                break
+        if raw.startswith(WILD_MARKER):
+            headless.append(key)
+
+    for key, used, n in bad:
+        fail('%s：{*} 有 %d 个，译文引用 %s（必须是 0..%d）' % (key, n, used, n - 1))
+    if len(headless) > 60:
+        fail('首段为空的 {*} 模板 %d 条（上限 60）：%s' % (len(headless), headless[:5]))
+    elif headless:
+        note('{*} 模板共 %d 条，其中首段为空（无索引、逐条试）%d 条'
+             % (sum(1 for k in table if kind_of(k) == KIND_TEMPLATE and WILD_MARKER in k), len(headless)))
+
+
 def check_template_gate(table):
     """模板门禁 = **最短**那条模板键的归一化长度 —— 报出来，别让它被悄悄拖低。
 
@@ -371,7 +412,7 @@ def check_template_gate(table):
         if not s:
             continue
         # 参数化模板按最短展开（{#} = 1 位数字）计。
-        rows.append((len(s) - s.count(PARAM_MARKER) * 2, key))
+        rows.append((len(s) - s.count(PARAM_MARKER) * 2 - s.count(WILD_MARKER) * 2, key))
     if not rows:
         return
     gate, pin = min(rows)
@@ -432,6 +473,7 @@ def main():
     check_ship_names(table)
     check_scope_categories(table)
     check_template_gate(table)
+    check_wild_templates(table)
     check_template_canonical_duplicates(table)
     check_layout(data_dir, table)
 
