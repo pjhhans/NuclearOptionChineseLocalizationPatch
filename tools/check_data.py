@@ -355,6 +355,52 @@ def check_template_canonical_duplicates(table):
 WILD_MARKER = '{*}'
 
 
+HUD_SCOPE = 'BS:HUD'
+
+
+def hud_visual_em(s):
+    """一段文字的**视觉宽度**，单位 em。
+
+    与插件侧 TmpPatches.FitsHudGrid 是同一套口径（改一处必须改另一处）：
+    汉字/全角 1 em，其余按 ScopeText.DesignAdvance = 0.65 em 的等宽拉丁算。
+    """
+    total = 0.0
+    for ch in s:
+        o = ord(ch)
+        wide = (0x2E80 <= o <= 0x9FFF) or (0xF900 <= o <= 0xFAFF) or (0xFF00 <= o <= 0xFFEF)
+        total += 1.0 if wide else 0.65
+    return total
+
+
+def check_hud_width(table):
+    """`[BS:HUD]` 的译文必须放得进 mod 自绘 HUD 的字格子。
+
+    mod 的 Hud 模块把每个词画在一个按**等宽拉丁**算好的格子里
+    （ScopeText.Draw：`原文长度 × 0.65 em × 1.1 + 6 px`），外层还套了 RectMask2D，
+    放不下就被裁掉半个字。插件侧的策略是「放不下就保持英文」（见
+    TmpPatches.FitsHudGrid / PatchHelpers.ReportHudTooWide），
+    所以这里超宽 = 这条词**永远不会显示中文**，必须报出来改短。
+    """
+    over, way = [], []
+    for key, value in table.items():
+        if not key.startswith('['):
+            continue
+        scope, _, src = key[1:].partition(']')
+        if scope != HUD_SCOPE or not value:
+            continue
+        grid = len(src) * 0.715 + 0.5
+        need = hud_visual_em(value)
+        if need > grid:
+            (way if need > grid * 1.3 else over).append((src, value, need, grid))
+
+    for src, value, need, grid in over:
+        note('HUD 略宽（实机会保持英文）：%s → %s（%.2f em > 格子 %.2f em）'
+             % (src, value, need, grid))
+    for src, value, need, grid in way:
+        fail('HUD 明显放不下：%s → %s（%.2f em > 格子 %.2f em，超出 %.0f%%）'
+             % (src, value, need, grid, (need / grid - 1) * 100))
+
+
 def check_wild_templates(table):
     """`{*}` 文本通配模板的三条硬约束。
 
@@ -474,6 +520,7 @@ def main():
     check_scope_categories(table)
     check_template_gate(table)
     check_wild_templates(table)
+    check_hud_width(table)
     check_template_canonical_duplicates(table)
     check_layout(data_dir, table)
 

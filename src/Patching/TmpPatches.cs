@@ -86,6 +86,82 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             sourceText = new StringBuilder(translated);
         }
 
+        /// <summary>
+        /// <c>SetCharArray(char[], int, int)</c> —— mod 自绘 HUD 走的唯一通路。
+        ///
+        /// <para><b>为什么必须单独打点。</b>Boscali Summer 的 <c>Hud</c> 模块不用
+        /// TMP 组件的 <c>text</c>：它自己维护一个标签池（<c>ScopeText</c>），每个词
+        /// 走 <c>TextMeshProUGUI.SetCharArray(chars, 0, len)</c> 画上去。
+        /// 这条路径既不经过 <c>text</c> setter，也不经过任何 <c>SetText</c> 重载，
+        /// 于是整套 HUD（STORES MGMT / PWR BUS / EXPENDABLES / GEAR / SYSTEMS /
+        /// THREAT / 告警条 …）在词表里明明有译文却**一个都不出中文**，
+        /// 而且既不进命中、也不进漏译清单（日志干干净净）—— 2026-10-29 实机截图就是这样。</para>
+        ///
+        /// <para><b>只作用于 mod HUD。</b><c>SetCharArray</c> 是 TMP 的通用底层接口，
+        /// 卡组、输入框、第三方 mod 都可能用；这里用 <see cref="PatchHelpers.IsHudWord"/>
+        /// （节点名 <c>Word</c> 且在 <c>Boscali*</c> 子树内）把范围钉死，
+        /// 其余调用一律原样放过 —— 与「只有显式登记的键才改变行为」的既有原则一致。</para>
+        ///
+        /// <para><b>宽度守卫。</b>HUD 的列宽是按等宽拉丁字面算死的
+        /// （<c>ScopeText.DesignAdvance = 0.65 em</c>），外层还套了 <c>RectMask2D</c>：
+        /// 中文一字 1 em，放不下就会被裁掉半个字，比不翻更难看。所以超出格子就
+        /// **保持英文**，并把这条记进日志（去重、限次），由数据侧改成更短的译名。</para>
+        /// </summary>
+        [HarmonyPatch(typeof(TMP_Text), "SetCharArray", new[] { typeof(char[]), typeof(int), typeof(int) })]
+        [HarmonyPrefix]
+        internal static void SetCharArrayPrefix(TMP_Text __instance, ref char[] sourceText, ref int start, ref int length)
+        {
+            if (sourceText == null || length <= 0 || length > MaxHudWord) return;
+            if (start < 0 || start + length > sourceText.Length) return;
+            if (!PatchHelpers.IsHudWord(__instance)) return;
+
+            string original = new string(sourceText, start, length);
+            string translated;
+            if (!PatchHelpers.TryLocalize(original, __instance, out translated)) return;
+
+            if (!FitsHudGrid(original, translated))
+            {
+                PatchHelpers.ReportHudTooWide(original, translated);
+                return;
+            }
+
+            char[] buffer = translated.ToCharArray();
+            sourceText = buffer;
+            start = 0;
+            length = buffer.Length;
+        }
+
+        /// <summary>HUD 的一个词最长也就几十个字符（整句不会走这条），超出的直接放过。</summary>
+        private const int MaxHudWord = 96;
+
+        /// <summary>
+        /// 译文放得进 <c>ScopeText.Draw</c> 算出来的那个字格子吗。
+        ///
+        /// <para>格子宽（像素）= <c>原文长度 × 0.65 × size × 1.1 + 6</c>，
+        /// 换算成 em 就是 <c>原文长度 × 0.715 + 6/size</c>。这里按 size = 12 取
+        /// （HUD 词的字号绝大多数在这一档），常数项折成 0.5 em。
+        /// 译文的视觉宽度按「汉字 1 em、其余 0.65 em」估 —— 这就是实机上会被裁的量。</para>
+        /// </summary>
+        private static bool FitsHudGrid(string original, string translated)
+        {
+            float grid = original.Length * 0.715f + 0.5f;
+            float need = 0f;
+            for (int i = 0; i < translated.Length; i++)
+            {
+                char c = translated[i];
+                need += IsWideChar(c) ? 1f : 0.65f;
+            }
+            return need <= grid;
+        }
+
+        /// <summary>全角字符（汉字、全角标点、假名）。判据与 <see cref="TextLocalizer.HasChinese"/> 同源。</summary>
+        private static bool IsWideChar(char c)
+        {
+            return (c >= 0x2E80 && c <= 0x9FFF)     // CJK 部首 / 假名 / 统一汉字
+                || (c >= 0xF900 && c <= 0xFAFF)     // 兼容汉字
+                || (c >= 0xFF00 && c <= 0xFFEF);    // 全角形式
+        }
+
         [HarmonyPatch(typeof(TMP_Text), "ParseInputText")]
         [HarmonyPrefix]
         internal static void ParseInputTextPrefix(TMP_Text __instance)

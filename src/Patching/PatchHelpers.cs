@@ -204,6 +204,72 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         }
 
         /// <summary>
+        /// mod HUD（Boscali Summer 的 <c>Hud</c> 模块）的**备选作用域**。
+        ///
+        /// <para><b>为什么要单独成域。</b>这个模块不是用 TMP 组件摆文字，而是
+        /// <c>ScopeText</c> 自己开一个 <b>固定 12 px 网格</b> 的标签池，逐词
+        /// <c>SetCharArray</c> 画上去（坐标、字号、列宽全部按 <c>DesignAdvance = 0.65 em</c>
+        /// 的等宽拉丁字面算死）。所以它的词是**独立语义**，与本体同名词条冲突：
+        /// HUD 的 <c>CLEAR</c> 是「无威胁」，本体词表里 <c>CLEAR = 清除</c>；
+        /// HUD 的 <c>GEAR</c> 是起落架状态灯，<c>SAFE</c> 是武器保险，都落在本体
+        /// 同名键上，一旦串味就是错的。</para>
+        ///
+        /// <para><b>判据。</b>这个模块的标签对象名固定是 <c>"Word"</c>
+        /// （<c>ScopeText.NewLabel</c> 里 <c>new GameObject("Word", …)</c>），
+        /// 且挂在 <c>Boscali*</c> 根下（<c>StatusPanel</c> 的根叫
+        /// <c>"BoscaliStatusPanel"</c>），所以「名字 = Word 且在 mod 子树内」即可，
+        /// 与本体任何节点都不会撞。</para>
+        ///
+        /// <para><b>成本。</b>按 Transform 缓存（<c>ConditionalWeakTable</c>），
+        /// 每个标签对象一生只走一次父链；之后每条文本多一次表探测（约 30 ns）。
+        /// HUD 上标签池是按帧复用的（几十个），且只在文字变化时才调
+        /// <c>SetCharArray</c>，稳定画面下等于零。</para>
+        /// </summary>
+        internal const string HudScopeName = "BS:HUD";
+
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Transform, object> HudWordCache =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<Transform, object>();
+
+        /// <summary>这个组件是不是 mod HUD 的一个词（<c>ScopeText</c> 的标签池成员）。</summary>
+        internal static bool IsHudWord(Component comp)
+        {
+            if (comp == null || !ModScopeEnabled) return false;
+            Transform t = comp.transform;
+            if (t == null) return false;
+
+            object cached;
+            if (HudWordCache.TryGetValue(t, out cached)) return ReferenceEquals(cached, Yes);
+
+            // 先比名字（一次比较，绝大多数节点当场退出），再判 mod 子树。
+            bool hit = string.Equals(t.name, "Word", StringComparison.Ordinal) && IsModUi(t);
+
+            HudWordCache.Remove(t);
+            HudWordCache.Add(t, hit ? (object)Yes : No);
+            return hit;
+        }
+
+        /// <summary>已经报过「HUD 放不下」的原文（同一串只报一次）。</summary>
+        private static readonly System.Collections.Generic.HashSet<string> HudTooWideSeen =
+            new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+        private static int _hudTooWideBudget = 80;
+
+        /// <summary>
+        /// 记一条「译文比字格子宽，所以保持英文」。
+        ///
+        /// <para>HUD 的列宽是按等宽拉丁算死的（<c>ScopeText.DesignAdvance = 0.65 em</c>），
+        /// 中文一字 1 em，超出就被 <c>RectMask2D</c> 裁掉半个字。这种情况下保持英文比
+        /// 画一半更好，但必须留下线索 —— 否则「明明有译文却不显示」又会变成要靠猜的问题。
+        /// 同一串只报一次，预算 80 条。</para>
+        /// </summary>
+        internal static void ReportHudTooWide(string original, string translated)
+        {
+            if (_hudTooWideBudget <= 0) return;
+            if (!HudTooWideSeen.Add(original)) return;
+            _hudTooWideBudget--;
+            Diagnostics.Log.Warn("[HUD] 放不进格子，保持英文：「" + original + "」→「" + translated + "」");
+        }
+
+        /// <summary>
         /// 尝试翻译。返回 true 表示应当写回（结果与原文不同且确实含中文）。
         /// </summary>
         internal static bool TryLocalize(string original, Component comp, out string translated)
@@ -221,19 +287,27 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             // 「作用域推断」段（性能探针，默认关）：每次潜在翻译一次，含原生 name 编组。
             long probeScope = Diagnostics.PerfProbe.Begin();
             string scope = ScopeOf(comp);
+            // mod 自绘 HUD 的标签池：作用域直接换成 HUD 专用域。
+            // 它每个标签的节点名都叫 "Word"（ScopeOf 会给出 "BS:Word"），
+            // 拿这个当作用域既没意义、又让 HUD 的 CLEAR/GEAR/SAFE 落在本体同名词条上。
+            if (IsHudWord(comp)) scope = HudScopeName;
             Diagnostics.PerfProbe.End(Diagnostics.PerfProbe.Seg.ScopeOf, probeScope);
 
-            // mod 航电控制台：先试控制台级作用域（只认精确登记，未登记则原路返回，行为不变）。
-            // 典型是 WMC 的标题与选项卡标签 —— 它们叶子名是 Title/Label，会被本体同名词条串味。
-            string consoleScope = ConsoleScopeOf(comp);
-            if (consoleScope != null)
+            // 备选作用域：先试「更细的那一层」，只认精确登记，未登记则原路返回、行为不变。
+            //   · mod 航电控制台（AvConsole）—— 叶子名是 Title/Label，会被本体同名词条串味；
+            //   · mod 自绘 HUD（ScopeText 的 "Word" 标签池）—— CLEAR/GEAR/SAFE 与本体
+            //     同名不同义，见 HudScopeName 的注释。
+            string altScope = ConsoleScopeOf(comp);
+            if (altScope == null && IsHudWord(comp)) altScope = HudScopeName;
+
+            if (altScope != null)
             {
-                string consoleHit = LocalizationPlugin.Table.LookupScoped(consoleScope, original);
-                if (consoleHit != null && consoleHit != original && Core.TextLocalizer.HasChinese(consoleHit))
+                string altHit = LocalizationPlugin.Table.LookupScoped(altScope, original);
+                if (altHit != null && altHit != original && Core.TextLocalizer.HasChinese(altHit))
                 {
-                    translated = consoleHit;
-                    Remember(consoleHit, original);
-                    RewriteGuard.Track(comp, original, consoleHit);
+                    translated = altHit;
+                    Remember(altHit, original);
+                    RewriteGuard.Track(comp, original, altHit);
                     Host.NotifyTranslationActivity();
                     LocalizationPlugin.NotifyLocalized(comp as TMP_Text);
                     return true;
