@@ -130,6 +130,9 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
             if (Enabled == enabled) return;
             Enabled = enabled;
             Reset();
+            // 探针与落盘同生共死：面板只留最近一秒，而判断「每帧吃多少毫秒」需要整段的分布。
+            if (enabled) ProbeDump.Open();
+            else ProbeDump.Close();
             Log.Info(enabled
                 ? "性能探针已开启（测量期间有额外计时开销，仅供取样）。"
                 : "性能探针已关闭。");
@@ -266,6 +269,14 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
 
             long frameDelta = _frames - _baseFrames;
             BytesPerFrame = frameDelta > 0 ? (float)(allocDelta / (double)frameDelta) : 0f;
+
+            // 落盘与面板同源：面板是「最近一秒」，CSV 是「每一秒」，两者口径必须完全一致，
+            // 否则事后对不上账（也方便排除「面板看着正常、实际没落盘」这类问题）。
+            ProbeDump.WriteRow(
+                dt, (int)Math.Min(frameDelta, int.MaxValue),
+                CallsPerSecond, MsPerSecond, UsPerCall,
+                Gc0PerSecond, Gc1PerSecond, Gc2PerSecond,
+                KbPerSecond, BytesPerCall, BytesPerFrame);
         }
 
         private static int Round(long count, float dt)

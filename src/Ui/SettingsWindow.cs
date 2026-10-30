@@ -287,6 +287,12 @@ namespace NuclearOptionChineseLocalizationPatch.Ui
             GUILayout.Label(PerfProbe.Enabled ? PerfProbe.SummaryLine() : "　（未开启 —— 勾选后约 1 秒出数）");
             GUILayout.Label(PerfProbe.Enabled ? PerfProbe.SegmentLine() : string.Empty);
             GUILayout.Label(PerfProbe.Enabled ? PerfProbe.PeakLine() : string.Empty);
+            // 落盘状态也必须占一个恒定条数（同上：按状态增减控件会让 Layout/Repaint 两趟不一致）。
+            GUILayout.Label(!PerfProbe.Enabled
+                ? string.Empty
+                : ProbeDump.Active
+                    ? "　落盘 " + ProbeDump.Rows + " 个窗口 → " + ProbeDump.CurrentPath
+                    : "　落盘不可用（见日志；面板读数仍然有效）");
             if (GUILayout.Button("清零探针统计", GUILayout.Height(22f)))
             {
                 PerfProbe.Reset();

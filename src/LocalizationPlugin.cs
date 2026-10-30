@@ -985,6 +985,8 @@ namespace NuclearOptionChineseLocalizationPatch
         private void OnApplicationQuit()
         {
             MissLog?.Flush();
+            // 探针 CSV 每行都会 flush，这里只是把文件句柄收干净，并补一条「写到第几行」的日志。
+            Diagnostics.ProbeDump.Close();
         }
     }
 }
