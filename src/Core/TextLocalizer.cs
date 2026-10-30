@@ -278,6 +278,15 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             // ② 保持英文的术语（写在固定宽度槽位里的缩写）。
             if (_exclusions.IsKeptTerm(text)) return text;
 
+            // ②b 两侧被反引号包住（`整段正文`）。游戏数据里部分单位描述就是这种写法，
+            //     反引号会跟着一起查表 ⇒ 整条永远 miss，界面上还白多两个 ` 符号。
+            //     剥掉再走后面的流程；译文本身不含反引号，界面上也就干净了。
+            if (text.Length > 2 && text[0] == '`' && text[text.Length - 1] == '`')
+            {
+                string unquoted = text.Substring(1, text.Length - 2).Trim();
+                if (unquoted.Length > 0) text = unquoted;
+            }
+
             // ③ 翻译关闭时：把已显示的中文还原回原文，而不是放着不管。
             if (!Enabled) return Restore(text);
 
@@ -341,6 +350,21 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             // 多行：逐行翻译后原样重组（分隔符本身也要保留）。
             if (IsMultiLine(text))
             {
+                // ★ 多行描述框：词表键写的是「整段一行」，而控件里带硬换行。
+                //   逐行去查时每行只剩一句，整段键永远命中不了 —— 具体后果是
+                //   正文整段英文，而切片又会把行里的普通词（destroyed）当动词翻掉，
+                //   出现「…the repair and reconstruction of 摧毁了 hangars…」这种夹生句。
+                //   描述框本身按宽度自动软换行，译文写成一行不会破版，所以先整体查一次。
+                //   2026-10-30 实机：CRV-L / SLMMR-A3 / M12 的单位描述整段英文。
+                string flat = FlattenLines(text);
+                if (flat != null)
+                {
+                    string flatHit = null;
+                    if (!string.IsNullOrEmpty(scope)) flatHit = _table.LookupScoped(scope, flat);
+                    if (flatHit == null && !_table.IsForceScoped(scope)) flatHit = _table.LookupGlobal(flat);
+                    if (flatHit != null && HasChinese(flatHit)) return flatHit;
+                }
+
                 string[] lines = text.Split(new[] { '\n', '\u000B' });
                 MatchCollection separators = TokenPatterns.LineBreak.Matches(text);
                 var sb = new StringBuilder(text.Length + 32);
@@ -361,10 +385,43 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 }
 
                 string joined = sb.ToString();
-                return changed ? joined : text;
+                if (changed) return joined;
+
+                // 逐行一条都没翻出来：折叠成单行再走一遍完整流水线。
+                // 描述正文前面常挂一段「车型 / 系列」（`The Combat Reconnaissance Vehicle (Light) / `），
+                // 整段键从系列名开始 —— 只有让切片把 `/` 切开，后半段才查得到。
+                if (flat != null)
+                {
+                    string flatTrans = LocalizeLine(flat, scope);
+                    if (flatTrans != flat && HasChinese(flatTrans)) return flatTrans;
+                }
+                return text;
             }
 
             return LocalizeLine(text, scope);
+        }
+
+        /// <summary>
+        /// 把多行文本折叠成单行（换行/制表连续空白压成一个空格），用于「拿整段去查表」。
+        /// 纯空白返回 null。折叠只用于**查表**，不改写控件里的原始换行。
+        /// </summary>
+        private static string FlattenLines(string text)
+        {
+            var sb = new StringBuilder(text.Length + 8);
+            bool space = false;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\u000B')
+                {
+                    if (!space) { sb.Append(' '); space = true; }
+                    continue;
+                }
+                sb.Append(c);
+                space = false;
+            }
+            string s = sb.ToString().Trim();
+            return s.Length == 0 ? null : s;
         }
 
         /// <summary>单行处理：A 整串 → B 句式 → B2 片段 → C 切片。</summary>
