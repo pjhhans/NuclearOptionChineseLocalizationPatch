@@ -16,8 +16,18 @@ namespace NuclearOptionChineseLocalizationPatch.Core
     internal static class TokenPatterns
     {
         // ---------------------------------------------------------------- 切分与标签
-        /// <summary>富文本标签。注意是 <c>*</c> 而非 <c>+</c>，要能匹配 <c>&lt;&gt;</c> 空标签。</summary>
-        internal static readonly Regex Tag = new Regex(@"<[^>]*>", RegexOptions.Compiled);
+        /// <summary>
+        /// 富文本标签。必须是「真标签」形状：<c>&lt;/?[字母#]…&gt;</c>。
+        ///
+        /// <para><b>为什么不能用 <c>&lt;[^&gt;]*&gt;</c>。</b>通讯面板的台词引号
+        /// <c>&lt;&lt; 台词 &gt;&gt;</c>（ChatterStrip 敌方网 / vanilla 聊天）会被它整段吃掉：
+        /// 从第二个 <c>&lt;</c> 起，<c>[^&gt;]*</c> 一路吃到 <c>&gt;</c> —— 整句台词被当成一个
+        /// "标签" 剥空，于是 <c>&lt;color=…&gt;&lt;&lt; 台词 &gt;&gt;&lt;/color&gt;</c> 的
+        /// 内芯剥完是空串 → 永不翻译、也不进漏译（2026-10-30 实机：敌方红色通讯整行英文）。
+        /// 真 TMP 标签的首字符只会是字母、<c>#</c>（颜色简写）或 <c>/</c>；
+        /// <c>&lt;&lt;</c>、<c>&lt; </c>、<c>&lt;1</c> 都不是标签。</para>
+        /// </summary>
+        internal static readonly Regex Tag = new Regex(@"</?[A-Za-z#][^>]*>", RegexOptions.Compiled);
 
         /// <summary>
         /// 行分隔符：换行（<c>\n</c>）与垂直制表（<c>\v</c>）。
@@ -28,7 +38,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// <summary>
         /// 分隔符。除了常规标点，还刻意包含：
         ///   <c>T/A-30</c> —— 机型代号里的斜杠不能当分隔符（否则会被切成 T 和 A-30）
-        ///   <c>&lt;[^&gt;]+&gt;.*?&lt;/[^&gt;]+&gt;</c> —— 成对标签整体作为一个"不可切"单元
+        ///   <c>&lt;[字母#]…&gt;.*?&lt;/[字母]…&gt;</c> —— 成对标签整体作为一个"不可切"单元
         ///   <c>--</c> 与 <c>\s+-\s+</c> —— 破折号
         ///   <c>\t</c> —— 制表符。游戏里它是 UI 列表的**列分隔符**（例如任务编辑器的
         ///               编队标签 <c>BDF Combined Arms Company\t$250m</c>：名称 + 费用）。
@@ -42,9 +52,13 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         ///               不切开的话，首条正文的尾段会变成
         ///               <c>ECONOMY: … SHOPS  &lt;color=#00F0FF&gt;+++</c>——中间夹着标签，
         ///               查表必失败（2026-10-30 实机：只有第一条英文）。
+        ///
+        /// <para>标签分量与 <see cref="Tag"/> 同形状（<c>&lt;/?[A-Za-z#]…&gt;</c>）：
+        /// 旧写法 <c>&lt;[^&gt;]+&gt;</c> 会把台词引号 <c>&lt;&lt; 台词 &gt;&gt;</c> 当成
+        /// 一个"标签分隔符"整段吞掉 —— 被吞的文本不翻也不进漏译。</para>
         /// </summary>
         internal static readonly Regex Delimiter = new Regex(
-            @"(T/A-30|\+\+\+|<[^>]+>.*?</[^>]+>|<[^>]+>|--|\s+-\s+|[:/\[\]()|\n\v\t\u00B7\u25AA\u25B8\u25B2\u2715])",
+            @"(T/A-30|\+\+\+|<[A-Za-z#][^>]*>.*?</[A-Za-z][^>]*>|</?[A-Za-z#][^>]*>|--|\s+-\s+|[:/\[\]()|\n\v\t\u00B7\u25AA\u25B8\u25B2\u2715])",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>

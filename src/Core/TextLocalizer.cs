@@ -601,9 +601,18 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// </summary>
         private string TranslateTaggedRun(string part, string scope, ref bool changed)
         {
+            // 段内没有标签就没有可拆的正文 —— 原样返回。
+            // ★ 这不只是省事：调用点（SliceAndRebuild 的"剥了两端还剩标签"分支）把
+            //   **整个 part** 交进来，若没有标签，唯一的"正文 run"就是 part 本身，
+            //   TranslateRun → Localize 会原样回到同一段文本的 LocalizeLine →
+            //   再切一次、再进这里 —— 死循环。标签正则收窄到真标签形状后，
+            //   「文本里含 << 台词 >>」的段恰好就是这种形状，必须在此切断。
+            var tags = TokenPatterns.Tag.Matches(part);
+            if (tags.Count == 0) return part;
+
             var sb = new StringBuilder(part.Length + 16);
             int pos = 0;
-            foreach (Match m in TokenPatterns.Tag.Matches(part))
+            foreach (Match m in tags)
             {
                 if (m.Index > pos)
                     sb.Append(TranslateRun(part.Substring(pos, m.Index - pos), scope, ref changed));
