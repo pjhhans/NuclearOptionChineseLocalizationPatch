@@ -507,5 +507,32 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             string original;
             if (TryLookupOriginal(value, out original)) value = original;
         }
+
+        /// <summary>
+        /// 「量的是英文原文、实际装的是中文译文」时，把度量结果换成**实际文本**的度量。
+        ///
+        /// <para><b>形状。</b>mod 通讯行先 <c>set_text(英文)</c>（我们写进去中文），紧接着用
+        /// <c>GetPreferredValues(英文原文, 宽度, 0)</c> 算行高、按这个高度摆矩形。
+        /// 英文与中文的行高不同（回退字体 ascent+descent 更大），按英文量出来偏矮 ——
+        /// 于是译文溢出自己的框，和下一行叠在一起（2026-10-30 实机：通讯行互相覆盖）。
+        /// 同一形状也出现在 DL EVT LOG 的 <c>ResizeScrollContent</c>（读 <c>text</c> getter
+        /// 拿到的是还原后的英文）。</para>
+        ///
+        /// <para><b>判据。</b>调用方传入的字符串与控件实际持有的文本不同、
+        /// 且实际文本含中文 ⇒ 按实际文本重测。递归调用会在入口因「参数 == 实际文本」直接返回，
+        /// 不会成环。没有命中翻译的控件（绝大多数）只多一次字段读取 + 一次序数比较。</para>
+        /// </summary>
+        internal static void AdjustPreferredValues(TMP_Text t, string measured, float width, float height,
+            ref UnityEngine.Vector2 result)
+        {
+            if (t == null || string.IsNullOrEmpty(measured)) return;
+
+            string actual = Read(t);
+            if (string.IsNullOrEmpty(actual)) return;
+            if (string.Equals(actual, measured, StringComparison.Ordinal)) return;
+            if (!Core.TextLocalizer.HasChinese(actual)) return;
+
+            result = t.GetPreferredValues(actual, width, height);
+        }
     }
 }

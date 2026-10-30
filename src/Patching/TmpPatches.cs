@@ -190,6 +190,22 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             PatchHelpers.LocalizeInPlace(__instance);
         }
 
+        /// <summary>
+        /// <c>GetPreferredValues(string, float, float)</c> —— 布局度量。
+        ///
+        /// <para><b>为什么必须打。</b>mod 通讯行先写英文（我们换成中文），紧接着用
+        /// <b>英文原文</b>量行高、按这个高度摆矩形 —— 中文行高更大，量出来偏矮，
+        /// 译文溢出自己的框与下一行叠在一起（2026-10-30 实机：通讯行互相覆盖）。
+        /// 这是纯布局数据，不涉及渲染，改返回值不会污染任何文本内容。</para>
+        /// </summary>
+        [HarmonyPatch(typeof(TMP_Text), "GetPreferredValues", typeof(string), typeof(float), typeof(float))]
+        [HarmonyPostfix]
+        internal static void PreferredValuesPostfix(TMP_Text __instance, string text, float width, float height,
+            ref UnityEngine.Vector2 __result)
+        {
+            PatchHelpers.AdjustPreferredValues(__instance, text, width, height, ref __result);
+        }
+
         [HarmonyPatch(typeof(TextMeshProUGUI), "OnEnable")]
         [HarmonyPostfix]
         internal static void UguiOnEnablePostfix(TextMeshProUGUI __instance)
