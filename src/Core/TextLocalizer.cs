@@ -218,6 +218,17 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 {
                     RecordHit(text, result);
                 }
+
+                // 整段长原文留档。片段清单里的文本是**切片后**的，长描述被切成十几段，
+                // 拼不回运行时那个键 —— 想补词表就得知道原文逐字长什么样。
+                // 放在 _depth == 1 且结果仍是原文时：一次 set_text 至多记一次，
+                // 不随内部切片/逐行递归重复。长度门槛前置，短文本只多付一次 int 比较。
+                // ★ 关掉「记录漏译」时 RecordLong 首行即返回，常驻零成本。
+                else if (_depth == 1 && text.Length >= Diagnostics.MissLog.LongTextThreshold
+                         && string.Equals(result, text, StringComparison.Ordinal))
+                {
+                    _missLog.RecordLong(text, scope);
+                }
                 return result;
             }
             catch (Exception ex)

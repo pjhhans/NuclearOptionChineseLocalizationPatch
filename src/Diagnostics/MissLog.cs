@@ -29,7 +29,7 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
         private bool _dirty;
 
         /// <summary>整段留档的最短长度。短于此的走片段清单就够了。</summary>
-        private const int LongTextThreshold = 80;
+        internal const int LongTextThreshold = 80;
 
         internal MissLog(string dataDir)
         {
@@ -122,8 +122,10 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
         /// <summary>整段长原文留档 —— 片段清单里的截断文本对不上运行时的键，只能靠它。</summary>
         internal void RecordLong(string original, string scope)
         {
-            if (string.IsNullOrEmpty(original) || original.Length < LongTextThreshold) return;
+            // 开关先判：默认关时这条路径要挂在每一次 set_text 末尾，
+            // 让它只付一次布尔读，而不是先算 Length 再被开关挡回去。
             if (!Recording) return;
+            if (string.IsNullOrEmpty(original) || original.Length < LongTextThreshold) return;
             string key = string.IsNullOrEmpty(scope) ? original : "[" + scope + "]" + original;
             if (_longTexts.Add(key)) _dirty = true;
         }
