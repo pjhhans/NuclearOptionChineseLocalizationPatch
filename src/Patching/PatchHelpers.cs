@@ -300,6 +300,35 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         }
 
         /// <summary>
+        /// 多行译文 + 纵向截断（Ellipsis/Truncate）的预防放行。
+        ///
+        /// <para><b>形状。</b>mod 通讯行是「表头\n正文」一整个 TMP 对象，mod 在
+        /// <c>Show()</c> 时用<b>英文原文</b> <c>GetPreferredValues</c> 算好行高、
+        /// <c>overflowMode = Ellipsis</c>，此后每帧按这个高度摆放矩形。译文含中文后，
+        /// 回退字体的行高（ascent+descent）比拉丁字体大 —— 第二行（正文）超出按英文算的框，
+        /// TMP 纵向截断把正文整行的字符全部不生成。表头还在 ⇒ <c>characterCount &gt; 0</c>
+        /// ⇒ 现有自愈通道（<c>RepairStuck</c>，只认「整条 0 字符」）对此失明。</para>
+        ///
+        /// <para><b>表现。</b>关翻译英文正常、开翻译正文消失（2026-10-30 实机：AWACS
+        /// 通讯行空白）；此前「僚机紧急（黄色）台词整行蒸发」同此机制。</para>
+        ///
+        /// <para><b>为什么只放行多行。</b>宽度方向的 Ellipsis/Truncate 是刻意的排版设计
+        /// （列表、长句单行省略），动它会溢出边框；纵向截断在这个游戏里
+        /// 只在「mod 按英文算高 + 译文含中文」这一种组合下造成整行消失，
+        /// 所以判据收在「译文含 \n」上。<see cref="RepairStuck"/> 的第①步
+        /// （Ellipsis→Overflow）与本处是同一动作，那里是事后救、这里是事前防。</para>
+        /// </summary>
+        private static void RelaxVerticalTruncation(Component comp, string translated)
+        {
+            if (string.IsNullOrEmpty(translated) || translated.IndexOf('\n') < 0) return;
+            var tmp = comp as TMP_Text;
+            if (tmp == null) return;
+            TextOverflowModes om = tmp.overflowMode;
+            if (om == TextOverflowModes.Ellipsis || om == TextOverflowModes.Truncate)
+                tmp.overflowMode = TextOverflowModes.Overflow;
+        }
+
+        /// <summary>
         /// 尝试翻译。返回 true 表示应当写回（结果与原文不同且确实含中文）。
         /// </summary>
         internal static bool TryLocalize(string original, Component comp, out string translated)
@@ -336,6 +365,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 if (altHit != null && altHit != original && Core.TextLocalizer.HasChinese(altHit))
                 {
                     translated = FitRichText(comp, altHit);
+                    RelaxVerticalTruncation(comp, translated);
                     Remember(altHit, original);
                     RewriteGuard.Track(comp, original, altHit);
                     Host.NotifyTranslationActivity();
@@ -348,6 +378,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             if (result == original || !Core.TextLocalizer.HasChinese(result)) return false;
 
             translated = FitRichText(comp, result);
+            RelaxVerticalTruncation(comp, translated);
             Remember(result, original);
             RewriteGuard.Track(comp, original, result);
             // 新内容真的翻出来了 —— 告诉兜底扫描「界面在变」，把空闲退避清零，
