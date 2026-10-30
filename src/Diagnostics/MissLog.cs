@@ -53,12 +53,18 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
         private const int RecentCapacity = 12;
         private readonly Queue<string> _recent = new Queue<string>(RecentCapacity);
 
+        /// <summary>
+        /// 环里现有的键（**未截断**全量 key）。截断展示在 <see cref="SnapshotRecent"/> 做，
+        /// 去重必须按全量比 —— 否则 52 字符之后才不同的两条长文本会互相顶掉。
+        /// </summary>
+        private readonly HashSet<string> _recentKeys = new HashSet<string>(StringComparer.Ordinal);
+
         /// <summary>最近 N 条漏译片段，最新的在最前。窗口诊断区用。</summary>
         internal string[] SnapshotRecent()
         {
             var result = new string[_recent.Count];
             int i = 0;
-            foreach (string s in _recent) result[i++] = s;
+            foreach (string s in _recent) result[i++] = s.Length <= 52 ? s : s.Substring(0, 52) + "…";
             return result;
         }
 
@@ -68,8 +74,21 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
 
             string key = string.IsNullOrEmpty(scope) ? fragment : "[" + scope + "]" + fragment;
 
-            if (_recent.Count >= RecentCapacity) _recent.Dequeue();
-            _recent.Enqueue(key.Length <= 52 ? key : key.Substring(0, 52) + "…");
+            // ★ 环形缓冲先去重、再过滤读数，然后才入环（2026-10-30 实机：F11「最近漏译」
+            //   被逐帧刷新的文本刷屏 —— HUD 每帧 set_text 的漏译片段每帧都 Record 一次，
+            //   12 个槽位全是同一条/同一族读数，真正的一次性漏译被瞬间挤出窗口）。
+            //   ① 去重：已在环里的键不再入环 —— 同值重刷（含 A/B 交替刷）只占一个槽位，
+            //      直到被 12 条**不同**漏译挤出为止；
+            //   ② 读数：数值每帧都在变，去重对它无效（"M 0.05"/"M 0.06" 是不同的键），
+            //      只能按形状拦 —— 与落盘清单共用 ReadoutOnly，环上额外加 ValueUnit/
+            //      PrefixedReadout 两个数值形状。环本来就是给人眼扫缺口用的，
+            //      把"永远补不出译文"的形状放进来只会掩埋真缺口。
+            if (!_recentKeys.Contains(key) && !IsReadoutForRecent(fragment))
+            {
+                if (_recent.Count >= RecentCapacity) _recentKeys.Remove(_recent.Dequeue());
+                _recent.Enqueue(key);
+                _recentKeys.Add(key);
+            }
 
             if (!Recording) return;
             if (IsReadout(fragment)) return;      // 纯读数永远补不出译文，不进清单
@@ -84,6 +103,20 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
         private static bool IsReadout(string fragment)
         {
             return TokenPatterns.ReadoutOnly.IsMatch(fragment.Trim());
+        }
+
+        /// <summary>
+        /// 环形缓冲用的**放宽版**读数判定：在落盘判据（ReadoutOnly）之外，
+        /// 再加上「数值+短单位」（<c>673 km/h</c>）与「带前缀读数」（<c>x4</c>、<c>$1.96m</c>）。
+        /// 这两类同样永远补不出译文，且若以 HUD 读数形式逐帧刷新，数值每帧都变，
+        /// 去重拦不住 —— 只有按形状拦才有效。
+        /// </summary>
+        private static bool IsReadoutForRecent(string fragment)
+        {
+            string t = fragment.Trim();
+            return TokenPatterns.ReadoutOnly.IsMatch(t)
+                   || TokenPatterns.NoiseValueUnit.IsMatch(t)
+                   || TokenPatterns.NoisePrefixedReadout.IsMatch(t);
         }
 
         /// <summary>整段长原文留档 —— 片段清单里的截断文本对不上运行时的键，只能靠它。</summary>
@@ -101,6 +134,7 @@ namespace NuclearOptionChineseLocalizationPatch.Diagnostics
             _fragments.Clear();
             _longTexts.Clear();
             _recent.Clear();
+            _recentKeys.Clear();
             _dirty = true;
         }
 
