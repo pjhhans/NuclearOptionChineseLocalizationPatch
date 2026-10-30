@@ -411,7 +411,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
                 string altHit = LocalizationPlugin.Table.LookupScoped(altScope, original);
                 if (altHit != null && altHit != original && Core.TextLocalizer.HasChinese(altHit))
                 {
-                    translated = FitRichText(comp, altHit);
+                    translated = FitRichText(comp, Core.TextLocalizer.KeepEdgeSpaces(original, altHit));
                     RelaxVerticalTruncation(comp, translated);
                     Remember(altHit, original);
                     RewriteGuard.Track(comp, original, altHit);

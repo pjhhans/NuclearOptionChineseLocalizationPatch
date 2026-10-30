@@ -312,7 +312,11 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             if (!string.IsNullOrEmpty(scope))
             {
                 string scoped = _table.LookupScoped(scope, text);
-                if (scoped != null) return scoped;
+                // ★ 查表是 Trim 后匹配的，命中值不含两端空白；**原样返回会把原文的空格吃掉**。
+                //   数据链记录是「名字 / 动词 / 目标」三段独立文本拼出来的：
+                //   动词段原文是 ` intercepted `（前后各一个空格），命中后只剩「拦截了」，
+                //   于是渲染成「AFV8 MOBILE AIR DEFENSE拦截了」（2026-10-30 实机）。
+                if (scoped != null) return KeepEdgeSpaces(text, scoped);
 
                 // 强制作用域的语义是「只用本作用域词条 + 全局精确词条，禁止切分/句式/模式」，
                 // 而不是把全局精确词条也一起屏蔽 —— 后者会让没逐条登记的文本永远翻不了。
@@ -399,6 +403,38 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             }
 
             return LocalizeLine(text, scope);
+        }
+
+        /// <summary>
+        /// 把原文两端的空格补回译文两侧。
+        ///
+        /// <para><b>为什么需要。</b>作用域查表与整串查表都是 <c>Trim</c> 之后比对的，返回的译文
+        /// 不带两端空白。而游戏里很多文本是**按段拼接**的：数据链记录是「名字 / 动词 / 目标」
+        /// 三段各自一个控件，动词段原文 <c>" intercepted "</c>，命中后只剩「拦截了」，
+        /// 渲染出来就是「AFV8 MOBILE AIR DEFENSE拦截了」——名字和动词粘在一起。</para>
+        ///
+        /// <para>只补「原文有、译文没有」的那一侧：译文自带前导/尾随空格的（数据里刻意留的）
+        /// 不重复补，避免越补越宽。</para>
+        /// </summary>
+        internal static string KeepEdgeSpaces(string original, string translated)
+        {
+            if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(translated)) return translated;
+
+            int lead = 0;
+            while (lead < original.Length && original[lead] == ' ') lead++;
+            int trail = 0;
+            while (trail < original.Length - lead && original[original.Length - 1 - trail] == ' ') trail++;
+            if (lead == 0 && trail == 0) return translated;
+
+            bool hasLead = translated[0] == ' ';
+            bool hasTrail = translated[translated.Length - 1] == ' ';
+            if ((lead == 0 || hasLead) && (trail == 0 || hasTrail)) return translated;
+
+            var sb = new StringBuilder(translated.Length + lead + trail);
+            if (lead > 0 && !hasLead) sb.Append(' ', lead);
+            sb.Append(translated);
+            if (trail > 0 && !hasTrail) sb.Append(' ', trail);
+            return sb.ToString();
         }
 
         /// <summary>
