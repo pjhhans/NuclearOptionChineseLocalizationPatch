@@ -238,6 +238,7 @@
   "~{*} LEVELLED BY {*}": "{0} 被 {1} 夷平",
   "~{*} RECOVERED BY {*} — COMBAT SEARCH AND RESCUE SUCCESS": "{0} 被 {1} 救回 — 战斗搜救成功",
   "~{*} REPORTED DESTROYED IN COMBAT BY {*}": "{0} 报告在战斗中被 {1} 摧毁",
+  "~{*} RESERVE GRANTED": "{0} 预备队已批准",
   "~{*} SENT TO THE BOTTOM BY {*}": "{0} 被 {1} 击沉",
   "~{*} SUPPORT RESET {*}": "{0} 支援重置 {1}",
   "~{*} TAKEN PRISONER BY {*} — AIRCREW LISTED MIA": "{0} 被 {1} 俘虏 — 机组成员列为失踪",
