@@ -406,7 +406,11 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             string altScope = ConsoleScopeOf(comp);
             if (altScope == null && hudScope != null) altScope = hudScope;
 
-            if (altScope != null)
+            // ★ 翻译关掉时**不能走这条快捷路**：它绕开了 LocalizeInner 的「关翻译就还原」分支
+            //   （③ Restore），会继续把中文写回控件 —— 表现为「关了翻译，mod HUD 和数据链
+            //   记录整片还是中文，而普通文本已经变回英文」（2026-10-30 实机）。
+            //   这里让开，落到下面的 localizer.Localize 主路径，由 ③ 统一还原。
+            if (altScope != null && localizer.Enabled)
             {
                 string altHit = LocalizationPlugin.Table.LookupScoped(altScope, original);
                 if (altHit != null && altHit != original && Core.TextLocalizer.HasChinese(altHit))
