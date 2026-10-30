@@ -777,6 +777,33 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     continue;
                 }
 
+                // ★ 片段级通配模板。战报行被分隔符切碎（" - "、括号、冒号），整行级
+                //   模板再也看不到完整句型 —— 2026-10-30 实机：「OPERATION … SECURED -
+                //   +150 FUNDS…」被 " - " 切成两段、两段都翻不出；「X HAS BEEN CAPTURED
+                //   BY +」被本体的 " +" 续行标记截尾。模板的匹配语义本就是「整段形状」，
+                //   用在切片后的最小片段上同样成立；TryGetTemplate 内部先做规范化，
+                //   通配段的回译走 CaptureTranslator（与整行级一致）。
+                string wildHit;
+                if (_table.TryGetTemplate(piece, out wildHit))
+                {
+                    parts[i] = part.Replace(piece, wildHit);
+                    changed = true;
+                    continue;
+                }
+
+                // ★ 片段级片段拼接（前后缀）。Result 行「X TAKEN - THE LINE MOVES UP」
+                //   被 " - " 切开后，后缀片段（`<< TAKEN`）在整行级 B2 看不到
+                //   （行尾是 "UP" 不是 "TAKEN"）—— 只有把 ConcatFragments 下放到
+                //   片段层，"X TAKEN"／"X SCOUTED" 这类最小片段才能命中。
+                //   深度由 _fragmentDepth（MaxFragmentDepth）兜底，不会无限递归。
+                string pieceFrag = ConcatFragments(piece, scope);
+                if (pieceFrag != null && pieceFrag != piece && HasChinese(pieceFrag))
+                {
+                    parts[i] = part.Replace(piece, pieceFrag);
+                    changed = true;
+                    continue;
+                }
+
                 // ★ 交给尾缀模式的必须是 **Trim 过** 的 piece，不能是 part。
                 //   尾缀模式（VersionSuffix / ValueUnitSuffix / WordPlusNumber / ScoreSuffix…）
                 //   全部以 ^…$ 锚定，而 part 可能带首尾空白（HUD 读数的 prefab 常写成

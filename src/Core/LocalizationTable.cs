@@ -734,14 +734,16 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     if (caps[i].IndexOf('\n') >= 0 || caps[i].IndexOf('\r') >= 0) return null;
                 }
 
-                // 「裸二元」模板（{*} 动词 {*}，两个固定段都是空）只服务 kill feed 的
-                // **主动语态**（"UH-90 Ibis demolished Hellpad"）。被动句
-                // （"… factories are destroyed and …"）会被它吃成 {0}="…are"、
-                // 动词被误翻成「摧毁了」，句子支离破碎（2026-10-30 实机 victory 文本）。
-                // 被动句的特征极稳：{0} 以 be 动词收尾、{1} 以 "by " 开头 —— 命中即放弃。
-                if (Segments.Length == 3 && Segments[0].Length == 0 && Segments[2].Length == 0)
+                // 被动语态守卫（**所有**通配模板通用，不只裸二元）：
+                // ① 捕获段以 be 动词收尾 —— "…factories are destroyed…" 被
+                //    `{*} destroyed {*}` 吃成 {0}="…are"（victory 文本，2026-10-30 实机）；
+                //    片段级通配放开后受害面更大：「X was TAKEN」会被 `~{*} TAKEN`
+                //    吃成「X was 已被夺取」。
+                // ② 捕获段以 "by " 开头 —— 主动句的施动者被当成了受动者。
+                // 命中即放弃：主动语态的值模板套在被动句上必然支离破碎。
+                for (int i = 0; i < caps.Length; i++)
                 {
-                    if (EndsWithBeVerb(caps[0]) || StartsWithBy(caps[1])) return null;
+                    if (EndsWithBeVerb(caps[i]) || StartsWithBy(caps[i])) return null;
                 }
 
                 Func<string, string> tr = Owner != null ? Owner.CaptureTranslator : null;
