@@ -106,6 +106,7 @@
   "[BS:HUD]LAUNCH": "发射",
   "[BS:HUD]LEAK": "泄漏",
   "[BS:HUD]LEAK -": "泄漏 -",
+  "[BS:HUD]LEFT": "左侧",
   "[BS:HUD]LOC": "航道",
   "[BS:HUD]LOCK": "锁定",
   "[BS:HUD]LOS": "视距",
