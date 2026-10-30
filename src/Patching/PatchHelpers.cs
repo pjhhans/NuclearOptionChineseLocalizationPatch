@@ -229,25 +229,71 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// </summary>
         internal const string HudScopeName = "BS:HUD";
 
+        /// <summary>
+        /// 数据链记录（mod HUD 的 <c>DL EVT LOG</c> 面板）的独立作用域。
+        ///
+        /// <para><b>为什么要再切一层。</b>这个面板的每一行是「名字 + 连接词 + 名字」若干
+        /// 独立 span，名字来自 vanilla 播报、被 mod 统一转成大写（<c>FGA-57 ANVIL</c>），
+        /// 而 mod 排版把列位按 <c>ScopeText.DesignAdvance = 0.65 em</c> 的**英文字符宽度**
+        /// 算死 —— 名字一旦翻成中文（一字 1 em），后续 span 的起点就错位：窄了留空洞、
+        /// 宽了直接粘连（<c>冲击者防空导弹车拦截了</c>）。</para>
+        ///
+        /// <para><b>为什么不能直接放在 <see cref="HudScopeName"/> 里做。</b>那个域覆盖整个
+        /// mod HUD（提示条、STORES 页签、状态栏…），把装备名在那里登记成「不译」会连带
+        /// 把它们一起变回英文 —— 2026-10-30 实机就是这样误伤的。数据链记录有独立的根
+        /// <c>BoscaliEventLog</c>（<c>StatusPanel</c> 里 <c>CornerRoot("BoscaliEventLog")</c>
+        /// → <c>"Log"</c> → <c>"Words"</c> → 标签 <c>"Word"</c>），按父链就能隔开。</para>
+        ///
+        /// <para><b>失配降级。</b>mod 改名时这里认不出 <c>BoscaliEventLog</c>，一律退回
+        /// <see cref="HudScopeName"/> —— 行为与加这一层之前完全一致（名字继续按中文显示），
+        /// 不报错、不影响其它任何文本。</para>
+        /// </summary>
+        internal const string EventLogScopeName = "BS:EvtLog";
+
         private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Transform, object> HudWordCache =
             new System.Runtime.CompilerServices.ConditionalWeakTable<Transform, object>();
+
+        /// <summary>
+        /// 这个组件是 mod HUD 的哪个词，返回它的作用域名；不是 HUD 词则 <c>null</c>。
+        ///
+        /// <para><c>"Word"</c> 是 <c>ScopeText.NewLabel</c> 里写死的标签名，挂在
+        /// <c>Boscali*</c> 子树下；数据链记录再往下认一层 <c>BoscaliEventLog</c>。</para>
+        /// </summary>
+        internal static string HudWordScopeOf(Component comp)
+        {
+            if (comp == null || !ModScopeEnabled) return null;
+            Transform t = comp.transform;
+            if (t == null) return null;
+
+            object cached;
+            if (HudWordCache.TryGetValue(t, out cached)) return cached as string;
+
+            // 先比名字（一次比较，绝大多数节点当场退出），再判 mod 子树。
+            string scope = null;
+            if (string.Equals(t.name, "Word", StringComparison.Ordinal) && IsModUi(t))
+            {
+                scope = HudScopeName;
+                // 数据链记录：BoscaliEventLog / Log / Words / Word —— 最多 4 层就到根。
+                Transform cur = t.parent;
+                for (int depth = 0; depth < 4 && cur != null; depth++, cur = cur.parent)
+                {
+                    if (string.Equals(cur.name, "BoscaliEventLog", StringComparison.Ordinal))
+                    {
+                        scope = EventLogScopeName;
+                        break;
+                    }
+                }
+            }
+
+            HudWordCache.Remove(t);
+            HudWordCache.Add(t, scope ?? (object)No);
+            return scope;
+        }
 
         /// <summary>这个组件是不是 mod HUD 的一个词（<c>ScopeText</c> 的标签池成员）。</summary>
         internal static bool IsHudWord(Component comp)
         {
-            if (comp == null || !ModScopeEnabled) return false;
-            Transform t = comp.transform;
-            if (t == null) return false;
-
-            object cached;
-            if (HudWordCache.TryGetValue(t, out cached)) return ReferenceEquals(cached, Yes);
-
-            // 先比名字（一次比较，绝大多数节点当场退出），再判 mod 子树。
-            bool hit = string.Equals(t.name, "Word", StringComparison.Ordinal) && IsModUi(t);
-
-            HudWordCache.Remove(t);
-            HudWordCache.Add(t, hit ? (object)Yes : No);
-            return hit;
+            return HudWordScopeOf(comp) != null;
         }
 
         /// <summary>已经报过「HUD 放不下」的原文（同一串只报一次）。</summary>
@@ -349,7 +395,8 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             // mod 自绘 HUD 的标签池：作用域直接换成 HUD 专用域。
             // 它每个标签的节点名都叫 "Word"（ScopeOf 会给出 "BS:Word"），
             // 拿这个当作用域既没意义、又让 HUD 的 CLEAR/GEAR/SAFE 落在本体同名词条上。
-            if (IsHudWord(comp)) scope = HudScopeName;
+            string hudScope = HudWordScopeOf(comp);
+            if (hudScope != null) scope = hudScope;
             Diagnostics.PerfProbe.End(Diagnostics.PerfProbe.Seg.ScopeOf, probeScope);
 
             // 备选作用域：先试「更细的那一层」，只认精确登记，未登记则原路返回、行为不变。
@@ -357,7 +404,7 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             //   · mod 自绘 HUD（ScopeText 的 "Word" 标签池）—— CLEAR/GEAR/SAFE 与本体
             //     同名不同义，见 HudScopeName 的注释。
             string altScope = ConsoleScopeOf(comp);
-            if (altScope == null && IsHudWord(comp)) altScope = HudScopeName;
+            if (altScope == null && hudScope != null) altScope = hudScope;
 
             if (altScope != null)
             {

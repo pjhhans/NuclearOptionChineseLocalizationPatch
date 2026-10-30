@@ -429,6 +429,23 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// 作用域查询：分表（文件名即作用域名）优先，其次主表里的 <c>[Scope]原文</c> 形式。
         /// 返回 null 表示该作用域下没有登记。
         /// </summary>
+        /// <summary>
+        /// 作用域层级：细分域 → 它的父域。只有一层，没有父域时返回 <c>null</c>。
+        ///
+        /// <para><c>BS:EvtLog</c> 是 mod HUD 里<b>数据链记录那一个面板</b>（对象
+        /// <c>BoscaliEventLog</c> 子树）的细分域，用途只有一个 —— 让该面板里的装备名
+        /// 保持英文原样。它的其余文本（<c>INTCP</c> / <c>DEMO</c> / <c>CRASH</c> /
+        /// 动词 / 表头 <c>DL EVT LOG</c>）都还登记在父域 <c>BS:HUD</c> 里，
+        /// 所以查不到必须回落到父域，否则切域当天这些词会整批变回英文。</para>
+        ///
+        /// <para>用字面量而不是引 <c>Patching.PatchHelpers</c> 的常量：Core 层不反向
+        /// 依赖 Patching 层。两处字符串必须同步改。</para>
+        /// </summary>
+        private static string ParentScopeOf(string scope)
+        {
+            return string.Equals(scope, "BS:EvtLog", StringComparison.OrdinalIgnoreCase) ? "BS:HUD" : null;
+        }
+
         internal string LookupScoped(string scope, string text)
         {
             // 「作用域查询」段（性能探针，默认关）。这是本文件被调用最频繁的方法之一，
@@ -440,6 +457,20 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
                 Dictionary<string, string> dict;
                 if (_scoped.TryGetValue(scope, out dict))
+                {
+                    string hit;
+                    if (dict.TryGetValue(text, out hit)) return hit;
+
+                    string cleaned = KeyScrubber.Scrub(text).Trim();
+                    if (cleaned.Length > 0 && dict.TryGetValue(cleaned, out hit)) return hit;
+                }
+
+                // 子域回落父域：mod HUD 里「数据链记录」那一个面板单独成域（BS:EvtLog），
+                // 只用来登记「这些名字保持英文」；它的类别词（INTCP/DEMO/CRASH…）、
+                // 动词、表头仍然登记在父域 BS:HUD 里。不回落的话，切域当天这些词
+                // 就全变回英文（2026-10-30 实机：01:26 CRASH / 01:33 DEMO）。
+                string parent = ParentScopeOf(scope);
+                if (parent != null && _scoped.TryGetValue(parent, out dict))
                 {
                     string hit;
                     if (dict.TryGetValue(text, out hit)) return hit;
@@ -751,10 +782,53 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 for (int i = 0; i < caps.Length; i++)
                 {
                     string cap = caps[i];
-                    if (tr != null) cap = tr(cap);
+                    if (tr != null) cap = TranslateCaptureKeepingTags(cap, tr);
                     result = result.Replace("{" + i + "}", cap);
                 }
                 return result;
+            }
+
+            /// <summary>
+            /// 捕获段带富文本占位符时，只翻占位符之间的正文。
+            ///
+            /// <para><b>为什么必须做这一步。</b><see cref="TextCanonicalizer.Canonicalize"/>
+            /// 把标签换成了 <see cref="TextCanonicalizer.TagPlaceholder"/>，捕获段因此长成
+            /// 「占位符 + AFV8 Mobile Air Defense + 占位符」。
+            /// 直接交给 <see cref="LocalizationTable.CaptureTranslator"/> 会整段 miss ——
+            /// 词表里没有带占位符的键 —— 于是整句模板虽然命中，<b>被着色的那一段却原样保留英文</b>。</para>
+            ///
+            /// <para><b>实机症状（2026-10-30）。</b>原版战报
+            /// <c>&lt;color=#F05&gt;AFV8 Mobile Air Defense&lt;/color&gt; intercepted &lt;color=#5CF&gt;AGM-48&lt;/color&gt;</c>
+            /// 显示成「AFV8 Mobile Air Defense 拦截了 AGM-48」：动词是模板固定段、翻了；
+            /// 两个单位名都是捕获段、没翻。带标签的整行之所以还能翻名字，是因为它走的是切片那条路
+            /// （标签块分支），而模板这条路抢在切片**之前**，把整句吃掉了。</para>
+            ///
+            /// <para><b>占位符处理。</b>只认「前导 + 尾随」两组：颜色标签包住整段正文就是这种形状，
+            /// 个数与顺序原样保留，<see cref="TextCanonicalizer.ExpandTemplate"/> 回填时才能对上原文标签。
+            /// 正文**中间**还夹着占位符的（正文被标签切断）结构无法复原，原样返回 —— 宁可少翻一次，
+            /// 也不要把标签顺序搞乱、把颜色糊到别的词上。</para>
+            /// </summary>
+            private static string TranslateCaptureKeepingTags(string cap, Func<string, string> tr)
+            {
+                const char Tag = TextCanonicalizer.TagPlaceholder;
+
+                int lead = 0;
+                while (lead < cap.Length && cap[lead] == Tag) lead++;
+                int trail = 0;
+                while (trail < cap.Length - lead && cap[cap.Length - 1 - trail] == Tag) trail++;
+
+                string core = cap.Substring(lead, cap.Length - lead - trail);
+                if (core.Length == 0) return cap;                       // 整段都是标签
+                if (core.IndexOf(Tag) >= 0) return cap;                  // 正文中间还夹着标签
+
+                string translated = tr(core);
+                if (translated == core || translated.Length == 0) return cap;
+
+                var sb = new System.Text.StringBuilder(translated.Length + lead + trail);
+                sb.Append(Tag, lead);
+                sb.Append(translated);
+                sb.Append(Tag, trail);
+                return sb.ToString();
             }
 
             /// <summary>{0} 是否以 be 动词收尾（被动语态的前半句）。
