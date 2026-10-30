@@ -223,8 +223,12 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 // 拼不回运行时那个键 —— 想补词表就得知道原文逐字长什么样。
                 // 放在 _depth == 1 且结果仍是原文时：一次 set_text 至多记一次，
                 // 不随内部切片/逐行递归重复。长度门槛前置，短文本只多付一次 int 比较。
+                // ★ 必须排除「原文已含中文」：译文写回控件后游戏会原样再 set 一次，
+                //   ⑤ 段按幂等短路原样返回，于是 result == text —— 那是翻过的文本，
+                //   不是漏译（实测一次机库浏览就攒了 31 条中文「漏译」）。
                 // ★ 关掉「记录漏译」时 RecordLong 首行即返回，常驻零成本。
                 else if (_depth == 1 && text.Length >= Diagnostics.MissLog.LongTextThreshold
+                         && !HasChinese(text)
                          && string.Equals(result, text, StringComparison.Ordinal))
                 {
                     _missLog.RecordLong(text, scope);
