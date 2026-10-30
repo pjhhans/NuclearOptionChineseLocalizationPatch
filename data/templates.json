@@ -220,6 +220,7 @@
   "~You can defeat IR missiles by using flares - intense heat signatures - that can either distract or dazzle the seeker head.\n\nEvery aircraft in the arsenal has flares.": "你可以用干扰弹——强烈的热信号——来对抗红外导弹，它们能干扰或致盲导引头。\n\n武库中的每架飞机都配备干扰弹。",
   "~You have a {*} at {*}. He is the nearest.": "{1}。最近的是{0}。",
   "~You may taxi, {*}. Nothing in your way.": "可以滑行，{0}。前方畅通。",
+  "~[Boscali Summer scenario: {*}]": "[波斯卡利之夏剧本：{0}]",
   "~{#}x AeroSentry SPAAG": "{#}x 天空卫士 自行高炮",
   "~{#}x Linebreaker APC": "{#}x 冲击者装甲输送车",
   "~{#}x Linebreaker IFV": "{#}x 冲击者步兵战车",
