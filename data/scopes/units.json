@@ -16,6 +16,7 @@
   "[Description]Light": "轻型",
   "[Description]Long-range aircraft howitzer firing guided HE rounds.": "机载远程榴弹炮，发射制导高爆弹。",
   "[Description]Long-range anti-ship missile. Sea-skimming cruise with Mach 3 terminal dash.": "远程反舰导弹。掠海巡航，末段 3 马赫冲刺。",
+  "[Description]Roll-on service-tender kit. Fire above 300 m to open the ramp and launch a tethered service glider with lift fans; keep the tanker under 140 m/s. Friendly pilots fly into the zone astern and HOLD STEADY; choose FUEL, MUNITIONS or BOTH (and which pylon goes first) under SUPPORT > PIT STOP. The tender comes up under your belly, plugs its boom and lifts rounds onto your pylons from an 8 t fuel / 6 round stock. Fire again to recover.": "滚装式补给艇套件。在 300 米以上发射，尾门打开并放出带升力风扇的系留补给滑翔机；保持加油机速度低于 140 米/秒。友机从后方飞入区域并保持稳定；在 SUPPORT > 停靠补给 下选择燃油、弹药或两者（以及先补给哪个挂架）。补给艇会从你机腹下方升起，插上输油臂，从 8 吨燃油 / 6 发备弹的存量里把弹药吊装到你的挂架。再次发射即回收。",
   "[Description]The Combat Reconnaissance Vehicle": "战斗侦察车",
   "[Description]for targeting.": "来提供目标指示。",
   "[HardpointSetName]Gun Mount": "机炮挂架",
