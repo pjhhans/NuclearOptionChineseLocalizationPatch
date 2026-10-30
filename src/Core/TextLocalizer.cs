@@ -294,8 +294,20 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             //    这类文本早先若被按分隔符切成片段翻过，会留下半中半英的残局；
             //    让"已含中文"先短路的话，那个状态就永远修不回来了。
             string template;
-            if (_table.TryGetTemplate(text, out template))
+            bool wildcardHit;
+            if (_table.TryGetTemplate(text, out template, out wildcardHit))
             {
+                // 通配模板是「按句型的猜测」，整串精确词条是「确知」，后者必须优先。
+                // 否则「长句里恰好含 destroyed」会被 ~{*} destroyed {*} 拆成两半填进去，
+                // 得到「…reconstruction of 摧毁了 hangars…」这种夹生句，而整段译文
+                // 明明就在词表里（2026-10-30 实机：M12 折叠刀描述）。
+                if (wildcardHit)
+                {
+                    string exact = null;
+                    if (!string.IsNullOrEmpty(scope)) exact = _table.LookupScoped(scope, text);
+                    if (exact == null && !_table.IsForceScoped(scope)) exact = _table.LookupGlobal(text);
+                    if (exact != null && HasChinese(exact)) return KeepEdgeSpaces(text, exact);
+                }
                 return TextCanonicalizer.ExpandTemplate(text, template);
             }
 

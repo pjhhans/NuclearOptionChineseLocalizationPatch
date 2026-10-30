@@ -519,11 +519,26 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// </summary>
         internal bool TryGetTemplate(string text, out string value)
         {
+            bool wildcard;
+            return TryGetTemplate(text, out value, out wildcard);
+        }
+
+        /// <summary>
+        /// 同上，另外告诉调用方命中是不是来自**文本通配模板**。
+        ///
+        /// <para>区分的原因：通配模板是「按句型的猜测」，而整串精确词条是「确知」。
+        /// 一条长句里恰好含 <c>destroyed</c> 时，<c>~{*} destroyed {*}</c> 会抢在
+        /// 整串词条之前把句子拆成两半填进去 —— 调用方拿到 <c>wildcard=true</c> 后
+        /// 应先用精确词条试一次，成功就以精确词条为准。</para>
+        /// </summary>
+        internal bool TryGetTemplate(string text, out string value, out bool wildcard)
+        {
             // 「模板」段（性能探针，默认关）：整段套计时，多条提前返回路径都由 finally 收口。
             long probe = Diagnostics.PerfProbe.Begin();
             try
             {
                 value = null;
+                wildcard = false;
                 if (string.IsNullOrEmpty(text)) return false;
                 if (_templates.Count == 0 && _paramTemplates.Count == 0) return false;
                 if (text.Length < _minTemplateKeyLength) return false;
@@ -553,6 +568,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     {
                         WildTemplateHits++;
                         value = expandedWild;
+                        wildcard = true;
                         return true;
                     }
                 }
@@ -676,8 +692,26 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// <summary>分桶用的首段前缀长度。4 个字符足够把 6 百多条台词摊薄，也不会漏掉短前缀的键。</summary>
         private const int WildHeadLength = 4;
 
+        /// <summary>
+        /// 通配模板能作用的文本最长长度。
+        ///
+        /// <para><b>为什么需要上限。</b>通配模板服务的是**战报短行**
+        /// （<c>甲 destroyed 乙</c>，mod 截断后不超过 55 字符）。而单位描述是
+        /// 200 字符上下的整段话，里面可能恰好含 <c>destroyed</c>：
+        /// <c>~{*} destroyed {*}</c> 于是把整段按 <c>{0} 摧毁了 {1}</c> 展开，
+        /// 得到「…the repair and reconstruction of 摧毁了 hangars, helipads and vehicle depots.」
+        /// 这种夹生句 —— 而且它**先于整串精确词条执行**，把本该命中的整段译文也挡掉了
+        /// （2026-10-30 实机：M12 折叠刀描述）。</para>
+        ///
+        /// <para>180 是「战报行上限 55 / 一般 UI 句子 &lt; 120」与「描述段落 &gt; 200」之间的空档。</para>
+        /// </summary>
+        private const int MaxWildcardSubjectLength = 180;
+
         private string MatchWildTemplates(string canonical)
         {
+            // 长文本不是通配模板的适用对象（见 MaxWildcardSubjectLength）。
+            if (canonical.Length > MaxWildcardSubjectLength) return null;
+
             // ★ 顺序：**先查有固定前缀的**，再查首段为空的兜底。
             //   反过来的话，`~{*}. Phase is now {*}.` 会把
             //   「Operation Maris Airport. Phase is now AWAITING FORCES.」
