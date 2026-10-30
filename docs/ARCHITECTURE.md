@@ -227,7 +227,8 @@ src/
 │   ├─ MissLog.cs               漏译记录（默认不落盘；内存环形缓冲始终可用）
 │   ├─ HarmonySelfTest.cs       自打补丁验证 Harmony 是否真生效
 │   ├─ RuntimeStatus.cs         运行期状态快照（供 F11 窗口显示）
-│   └─ PerfProbe.cs             性能探针：热路径分段计时 + GC/分配（默认关、不落盘）
+│   ├─ PerfProbe.cs             性能探针：热路径分段计时 + GC/分配（默认关）
+│   └─ ProbeDump.cs             探针窗口落盘（CSV；与探针开关同生共死，失败静默降级）
 ├─ Patching/
 │   ├─ TmpPatches.cs            TMP_Text 系列补丁
 │   ├─ LegacyUiPatches.cs       UnityEngine.UI.Text 补丁
@@ -326,8 +327,8 @@ BepInEx 在「首个真实场景就绪**之前**」就加载插件（时序来�
 
 `TextLocalizer.Localize(text, scope)` 按下列顺序判定，**每一步都可能直接返回**：
 
-> 每一步的成本构成与实机实测（翻译全流程占单核不足 3%、采样窗口内 GC 为零）见
-> [`RISKS.md` 的「性能影响」](RISKS.md#性能影响完整论证)。
+> 每一步的成本构成与实机实测（翻译链路占帧预算 1.7~1.9%、GC 4~5 次/分钟，
+> 且整帧口径测不出该量级差异）见 [`RISKS.md` 的「性能影响」](RISKS.md#性能影响完整论证)。
 
 ```
 0. 空串                    → 原样返回
