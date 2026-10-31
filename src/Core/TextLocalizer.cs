@@ -534,18 +534,29 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             string trimmed = stripped.Trim();
             string key = KeyScrubber.Scrub(trimmed).Trim();
 
-            if (!string.IsNullOrEmpty(scope))
+            string scopedHit = string.IsNullOrEmpty(scope) ? null : _table.LookupScoped(scope, key);
+            if (scopedHit != null)
             {
-                string scopedHit = _table.LookupScoped(scope, key);
-                if (scopedHit != null && CanReplace(text, stripped))
-                    return text.Replace(stripped, scopedHit);
+                if (CanReplace(text, stripped)) return text.Replace(stripped, scopedHit);
+                // 命中的键在原文里不连续 —— 典型是 mod 自绘 HUD 的小数标签：
+                // `12<space=-0.02em>.<space=-0.12em>7MM …` 剥掉标签后才是词条原文。
+                // 词表译文本身不含标签，整条换上即可（界面端还会再剥一次标签）。
+                // 2026-10-31 实机：数据链里 12.7MM MG EMPLACEMENT 因此整段保持英文。
+                return KeepEdgeSpaces(text, scopedHit);
             }
 
-            if (!isForceScoped)
+            // 强制作用域的语义是「只用本作用域词条 + 全局精确词条，禁止切分/句式/模式」，
+            // 而不是把全局精确词条也一起屏蔽 —— 后者会让没逐条登记的文本永远翻不了。
+            if (_table.IsForceScoped(scope))
             {
-                string whole = _table.LookupGlobal(key);
-                if (whole != null && CanReplace(text, stripped))
-                    return text.Replace(stripped, whole);
+                return _table.LookupGlobal(text) ?? text;
+            }
+
+            string whole = _table.LookupGlobal(key);
+            if (whole != null)
+            {
+                if (CanReplace(text, stripped)) return text.Replace(stripped, whole);
+                return KeepEdgeSpaces(text, whole);
             }
 
             // ---------------------------------------------------------- A2 编号行

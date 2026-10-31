@@ -140,10 +140,17 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
             if (translated.IndexOf('<') >= 0)
                 translated = Core.TokenPatterns.Tag.Replace(translated, string.Empty);
 
-            if (!FitsHudGrid(original, translated))
+            if (!FitHudWord(__instance, original, translated, out float targetSize))
             {
                 PatchHelpers.ReportHudTooWide(lookup, translated);
                 return;
+            }
+            // 字号只在需要时写：缩小或恢复各一次 setter，其余帧不动。
+            if (!UnityEngine.Mathf.Approximately(__instance.fontSize, targetSize))
+            {
+                _sizeGuard = true;
+                __instance.fontSize = targetSize;
+                _sizeGuard = false;
             }
 
             char[] buffer = translated.ToCharArray();
@@ -155,24 +162,95 @@ namespace NuclearOptionChineseLocalizationPatch.Patching
         /// <summary>HUD 的一个词最长也就几十个字符（整句不会走这条），超出的直接放过。</summary>
         private const int MaxHudWord = 96;
 
+        /// <summary>缩小下限：译文再宽也不把字缩到七成半以下 —— 那不如保持英文。</summary>
+        private const float MinHudScale = 0.75f;
+
+        /// <summary>mod 在 <c>SetCharArray</c> 之前设置的「本意字号」。缩小是暂时的，恢复靠它。</summary>
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TMP_Text, System.Runtime.CompilerServices.StrongBox<float>> IntendedSizes =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<TMP_Text, System.Runtime.CompilerServices.StrongBox<float>>();
+
+        private static bool _sizeGuard;
+
         /// <summary>
-        /// 译文放得进 <c>ScopeText.Draw</c> 算出来的那个字格子吗。
-        ///
-        /// <para>格子宽（像素）= <c>原文长度 × 0.65 × size × 1.1 + 6</c>，
-        /// 换算成 em 就是 <c>原文长度 × 0.715 + 6/size</c>。这里按 size = 12 取
-        /// （HUD 词的字号绝大多数在这一档），常数项折成 0.5 em。
-        /// 译文的视觉宽度按「汉字 1 em、其余 0.65 em」估 —— 这就是实机上会被裁的量。</para>
+        /// 记下每个标签的「本意字号」。mod 的标签池只在字号变化那一帧写
+        /// <c>fontSize</c>（<c>slot.Size != num</c> 才写），我们缩小之后它不会改回来 ——
+        /// 不记这个值，缩小的字号就会顺着标签池泄漏给下一个复用这条槽位的词。
         /// </summary>
-        private static bool FitsHudGrid(string original, string translated)
+        [HarmonyPatch(typeof(TMP_Text), "fontSize", MethodType.Setter)]
+        [HarmonyPrefix]
+        internal static void FontSizeSetterPrefix(TMP_Text __instance, float value)
         {
-            float grid = original.Length * 0.715f + 0.5f;
+            if (_sizeGuard) return;
+            IntendedSizes.GetOrCreateValue(__instance).Value = value;
+        }
+
+        /// <summary>
+        /// 译文放得进 <c>ScopeText.Draw</c> 为原文预留的宽度吗；放不下就把字号等比
+        /// 缩小到恰好放下（缩到七成半以下放弃、保持英文）。
+        ///
+        /// <para><b>度量必须用字体真实的拉丁步进。</b>mod 的 <c>ScopeText.Measure</c>
+        /// 把字号放大到「每个拉丁字符恰好占 0.65 em 格」
+        /// （<c>fontSize = size × 0.65 / advance</c>），汉字没有跟着这个比例缩 ——
+        /// 它的渲染宽是 <c>1.0 em × fontSize</c>，折合 <b>1/advance 个格</b>。
+        /// 实测 Boscali 字体 advance ≈ 0.47 ⇒ 一个汉字占 <b>2.1 格</b>，
+        /// 不是旧公式假设的 1.54 格：8 个字的「冲击者防空导弹车」实占 17 格，
+        /// 放进 "LINEBREAKER SAM" 的 15 格里溢出 2 格，正好把后面动词
+        /// 「击落了」的「击」压住（2026-10-31 实机截图）。</para>
+        ///
+        /// <para>判据（单位都是 fontSize 的倍数）：预留 = 原文字符数 × advance；
+        /// 译文 = 汉字 ×1.0 + 其余 ×advance。</para>
+        /// </summary>
+        private static bool FitHudWord(TMP_Text label, string original, string translated, out float targetSize)
+        {
+            // mod 预留的宽度按**剥掉标签后**的原文算 —— 小数标签（<space=…em>）
+            // 的渲染宽度近似为零，不该按字符数占格。
+            float gridChars = Core.TokenPatterns.Tag.Replace(original, string.Empty).Length;
+            float advance = LatinAdvanceEm(label.font);
+            // 只量可见宽度：动词条目尾随的全角空格是「占位不显形」的拼接垫片，
+            // 把它们算进宽度会把所有动词判成超宽（2026-10-31 自检发现）。
+            string visible = translated.TrimEnd();
             float need = 0f;
-            for (int i = 0; i < translated.Length; i++)
+            for (int i = 0; i < visible.Length; i++)
+                need += IsWideChar(visible[i]) ? 1f : advance;
+
+            float intended = IntendedSizes.GetOrCreateValue(label).Value;
+            if (intended <= 0f) intended = label.fontSize;
+
+            if (need <= gridChars * advance)
             {
-                char c = translated[i];
-                need += IsWideChar(c) ? 1f : 0.65f;
+                targetSize = intended;      // 放得下：恢复 mod 给的字号（顺带治好槽位复用的残留）
+                return true;
             }
-            return need <= grid;
+            float scale = gridChars * advance / need;
+            if (scale < MinHudScale) { targetSize = label.fontSize; return false; }
+            targetSize = intended * scale;
+            return true;
+        }
+
+        /// <summary>各字体资产的拉丁步进（em / 字符）。首次测量后缓存，每字体只测一次。</summary>
+        private static readonly System.Collections.Generic.Dictionary<TMP_FontAsset, float> LatinAdvances =
+            new System.Collections.Generic.Dictionary<TMP_FontAsset, float>();
+
+        private static float LatinAdvanceEm(TMP_FontAsset font)
+        {
+            if (font == null) return 0.5f;
+            if (LatinAdvances.TryGetValue(font, out float a)) return a;
+            a = 0.5f;
+            try
+            {
+                // 这个 TMP 版本没有 TryAddCharacter(uint, out)，直接翻字表找 'M'
+                //（mod 的 Measure 用的就是 "MMMM…" 的步进），找不到退而求其次。
+                foreach (TMP_Character ch in font.characterTable)
+                {
+                    if (ch.glyph == null || ch.unicode != 'M') continue;
+                    a = ch.glyph.metrics.horizontalAdvance / font.faceInfo.pointSize;
+                    break;
+                }
+            }
+            catch { /* 读不到就按保守值 0.5 走：宁可多缩一点，不可溢出压字 */ }
+            if (a <= 0.05f || a > 1.5f) a = 0.5f;
+            LatinAdvances[font] = a;
+            return a;
         }
 
         /// <summary>全角字符（汉字、全角标点、假名）。判据与 <see cref="TextLocalizer.HasChinese"/> 同源。</summary>
