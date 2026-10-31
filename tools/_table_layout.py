@@ -127,6 +127,11 @@ SCOPE_GROUPS = {
         # 且 CLEAR/GEAR/SAFE/BINGO/JOKER 等与本体同名不同义（HUD 的 CLEAR 是「无威胁」，
         # 本体词表里是「清除」）。见 PatchHelpers.HudScopeName。
         "BS:HUD",
+        # 2026-10-31 补录：指挥面板（Command 模块，标准 TMP 界面）里成组出现的域。
+        # 它们本身就带 BS: 前缀、按 category_of_scope 已经会落 scopes/bs.json，
+        # 登记在这里只是让「未归类作用域」的提示别再点名。
+        "BS:EvtLog", "BS:Line", "BS:State", "BS:Offer", "BS:Meta",
+        "BS:Rank", "BS:DossierRole", "BS:Detail", "BS:Plate2",
     ],
     "units": [
         "AircraftName", "AircraftRank", "CounterMeasureName", "countermeasureName",
