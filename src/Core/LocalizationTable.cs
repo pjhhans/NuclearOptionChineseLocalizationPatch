@@ -119,6 +119,16 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
         private readonly List<Fragment> _prefixFragments = new List<Fragment>();
         private readonly List<Fragment> _suffixFragments = new List<Fragment>();
+
+        /// <summary>
+        /// 长度 ≤ 6 的后缀片段键（当前只有 <c> VEH</c>）。
+        ///
+        /// <para>只为「读数形状早退」放行：<c>25 VEH</c> 这类「数字 + 短单位」会被
+        /// <see cref="TokenPatterns.NoiseValueUnit"/> 判成噪声、连片段都不试，
+        /// 而数据侧登记后缀片段本身就是「这个词要翻」的显式声明。
+        /// 逐条比较，但表里只有个位数条目，且只在已判定为读数的串上走。</para>
+        /// </summary>
+        private readonly List<string> _shortSuffixes = new List<string>();
         private readonly List<Fragment> _infixFragments = new List<Fragment>();
 
         private readonly Dictionary<string, Dictionary<string, string>> _scoped =
@@ -210,6 +220,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             _wildByHead.Clear(); _wildHeadless.Clear();
             _wildTemplateCount = 0; WildTemplateHits = 0;
             _prefixFragments.Clear(); _suffixFragments.Clear(); _infixFragments.Clear();
+            _shortSuffixes.Clear();
             _scoped.Clear(); _scopedEntries = 0; _forceScoped.Clear();
             _globalHasBracketKeys = false;
             _minTemplateKeyLength = int.MaxValue;
@@ -308,6 +319,7 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 else if (key.Length > 2 && key[0] == '<' && key[1] == '<')
                 {
                     _suffixFragments.Add(new Fragment(key.Substring(2), value));
+                    if (key.Length - 2 <= 6) _shortSuffixes.Add(key.Substring(2));
                 }
                 else if (key.Length > 2 && key[0] == '=' && key[1] == '=')
                 {
@@ -441,9 +453,32 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// <para>用字面量而不是引 <c>Patching.PatchHelpers</c> 的常量：Core 层不反向
         /// 依赖 Patching 层。两处字符串必须同步改。</para>
         /// </summary>
+        /// <summary>「数据链记录」作用域名（与 <c>PatchHelpers.EventLogScopeName</c> 同值）。</summary>
+        internal const string EvtLogScope = "BS:EvtLog";
+
         private static string ParentScopeOf(string scope)
         {
-            return string.Equals(scope, "BS:EvtLog", StringComparison.OrdinalIgnoreCase) ? "BS:HUD" : null;
+            return string.Equals(scope, EvtLogScope, StringComparison.OrdinalIgnoreCase) ? "BS:HUD" : null;
+        }
+
+        /// <summary>
+        /// 唯一前缀回落：<paramref name="text"/> 是某个键的字面前缀时返回它的译文。
+        /// 两个以上候选视为歧义、返回 <c>null</c>（数据链里 `AFV6 A` 同时是
+        /// `AFV6 AA`/`AFV6 APC`/`AFV6 AT` 的前缀，这种必须放过）。
+        /// </summary>
+        private static string PrefixFallback(Dictionary<string, string> dict, string text)
+        {
+            string found = null;
+            foreach (KeyValuePair<string, string> kv in dict)
+            {
+                string key = kv.Key;
+                if (key.Length <= text.Length) continue;
+                if (string.Compare(key, 0, text, 0, text.Length, StringComparison.OrdinalIgnoreCase) != 0)
+                    continue;
+                if (found != null) return null;
+                found = kv.Value;
+            }
+            return found;
         }
 
         internal string LookupScoped(string scope, string text)
@@ -479,11 +514,27 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                     if (cleaned.Length > 0 && dict.TryGetValue(cleaned, out hit)) return hit;
                 }
 
+                // 数据链记录的「被截断名字」。
+                //   · mod 的 EventParser.Fit 会按**词**把过长的目标名砍短，并在行尾补一个 `+`：
+                //     `MEDIUM AIRCRAFT HANGAR` → `MEDIUM AIRCRAFT +`（2026-10-31 实机）；
+                //   · 逐字 wipe 动画把名字按字符前缀一帧一帧送进来：`AT-145 EMPL`。
+                // 这些形态永远不是词表里的键，但都是某个键的**字面前缀**。
+                // 只在唯一候选时采用；两个以上候选说明有歧义（AFV6 A 之于 AFV6 AA/APC/AT），
+                // 宁可保持英文也不猜。
+                if (scope == EvtLogScope && text.Length >= 4 && text.IndexOf(' ') >= 0)
+                {
+                    Dictionary<string, string> evtLog;
+                    if (_scoped.TryGetValue(EvtLogScope, out evtLog))
+                    {
+                        string prefixHit = PrefixFallback(evtLog, text);
+                        if (prefixHit != null) return prefixHit;
+                    }
+                }
+
                 // 主表里的 [Scope]原文 形态。载入期已证明通用表里不会有这类键
                 // （见 _globalHasBracketKeys），所以这里默认整段跳过 ——
                 // 省掉每次未命中的两次拼接与两次忽略大小写哈希。
                 if (!_globalHasBracketKeys) return null;
-
                 string scopedKey = "[" + scope + "]" + text;
                 string value;
                 if (_global.TryGetValue(scopedKey, out value)) return value;
@@ -499,6 +550,21 @@ namespace NuclearOptionChineseLocalizationPatch.Core
             {
                 Diagnostics.PerfProbe.End(Diagnostics.PerfProbe.Seg.Scoped, probe);
             }
+        }
+
+        /// <summary>
+        /// 串尾是否落在一条「短后缀片段」上（见 <see cref="_shortSuffixes"/>）。
+        /// 读数早退用它决定要不要放行 —— 放过的是数据侧显式登记过的单位词。
+        /// </summary>
+        internal bool EndsWithShortSuffix(string text)
+        {
+            for (int i = 0; i < _shortSuffixes.Count; i++)
+            {
+                string k = _shortSuffixes[i];
+                if (text.Length < k.Length) continue;
+                if (string.CompareOrdinal(text, text.Length - k.Length, k, 0, k.Length) == 0) return true;
+            }
+            return false;
         }
 
         /// <summary>该作用域是否被声明为强制作用域（只走本作用域词条 + 全局精确，不做模糊匹配）。</summary>

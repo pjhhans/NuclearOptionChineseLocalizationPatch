@@ -216,6 +216,10 @@ def check_generic_fragments(table):
     anchors = "·-:@%#/>()—›•×+&|$[\u2014"
     whitelist = {" S OLD", " VEH ", "CMD  ", "TWR  ", "Runway ", "runway ",
                  "TIED TO ", "Rearmed ",
+                 # 车辆计数：`25 VEH` 是 StrViewBuilder 直接 `Cnt + " VEH"` 拼出来的，
+                 # **没有尾随空格**，所以 `== VEH ` 那条（要求后面还有内容）接不住。
+                 # 后缀只在串尾命中，且 ` VEH` 不是任何正常句子的结尾，安全。
+                 " VEH",
                  # 动词词缀：只在**句首**命中（>> 前缀），且大写开头 ——
                  # `Sell RAH-72 Knockout` 是游戏用 "Sell " + 机型名实时拼出来的，
                  # 只登记整串永远追不上。整串键（"Sell aircraft"）优先级更高，不会被它抢。
@@ -358,6 +362,9 @@ WILD_MARKER = '{*}'
 HUD_SCOPE = 'BS:HUD'
 
 
+EVTLOG_SCOPE = 'BS:EvtLog'
+
+
 def hud_visual_em(s):
     """一段文字的**视觉宽度**，单位 em。
 
@@ -399,6 +406,37 @@ def check_hud_width(table):
     for src, value, need, grid in way:
         fail('HUD 明显放不下：%s → %s（%.2f em > 格子 %.2f em，超出 %.0f%%）'
              % (src, value, need, grid, (need / grid - 1) * 100))
+
+
+def check_evtlog_width(table):
+    """`[BS:EvtLog]` 允许汉化，但译文显示宽度不得超过原文（用户裁决 2026-10-31）。
+
+    数据链每行是「名字 / 动词 / 目标」三段拼接出来的，控件宽度按拉丁字符排死，
+    外层还有 RectMask2D。译文比原文宽就会被裁掉尾巴 —— 而裁掉的是行尾，
+    看起来就像「名字被截断」，比整条英文更难辨认。
+
+    **基准取原文自身宽度，不是 mod 的格子宽度。** 格子实际是
+    `原文长度 × 0.715 em + 0.5`，比原文（`长度 × 0.65 em`）宽约 10%；
+    这里按更严的口径卡，给三段拼接留余量。
+
+    尾随空白不计：动词条目（`crashed` → `已坠毁　　`）刻意补了全角空格做分隔，
+    它落在行尾不产生可见像素，也不影响是否被裁。
+    """
+    over = []
+    for key, value in table.items():
+        if not key.startswith('['):
+            continue
+        scope, _, src = key[1:].partition(']')
+        if scope != EVTLOG_SCOPE or not value or value == src:
+            continue
+        need = hud_visual_em(value.rstrip())
+        base = hud_visual_em(src.rstrip())
+        if need > base:
+            over.append((src, value, need, base))
+
+    for src, value, need, base in over:
+        fail('数据链译文宽于原文（实机会被裁）：%s → %s（%.2f em > 原文 %.2f em，超 %.0f%%）'
+             % (src, value, need, base, (need / base - 1) * 100))
 
 
 def check_wild_templates(table):
@@ -521,6 +559,7 @@ def main():
     check_template_gate(table)
     check_wild_templates(table)
     check_hud_width(table)
+    check_evtlog_width(table)
     check_template_canonical_duplicates(table)
     check_layout(data_dir, table)
 

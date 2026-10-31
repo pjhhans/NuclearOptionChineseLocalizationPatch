@@ -73,6 +73,22 @@ namespace NuclearOptionChineseLocalizationPatch.Core
         /// </summary>
         internal const string LoneDelimiters = ":/[]()|\n\v\t\u00B7\u25A0\u25AA\u25B8\u25B2\u2715";
 
+        /// <summary>
+        /// mod 自绘 HUD 的小数「字距标记」：<c>ScopeText.Mark</c> 会把 <c>12.7</c> 改写成
+        /// <c>12 . 7</c>（小数点两侧各插一个空格，靠空白把小数点收窄 —— 见其
+        /// <c>dotLead</c>/<c>dotTrail</c> 两段空格常量）。
+        ///
+        /// <para>它是画字用的排版手段，却发生在 <b>set_text 之前</b>，于是插件拿到的是
+        /// <c>12 . 7MM MG EMPLACEMENT</c>：词表里当然没有这种带空格的键，带小数的名字
+        /// 一律 miss（2026-10-31 实机：数据链记录里 12.7MM MG EMPLACEMENT 保持英文，
+        /// 而同一行的 23mm 高炮阵地 正常）。折叠回去再查即可。</para>
+        ///
+        /// <para>判据要求小数点两侧都是数字，普通文案里不会出现「数字 空格 . 空格 数字」，
+        /// 因此不会误伤；译文本身没有这条标记，折叠后也不会再被画出来。</para>
+        /// </summary>
+        internal static readonly Regex SpacedDecimal =
+            new Regex(@"(?<=\d)[ \t]+\.[ \t]+(?=\d)", RegexOptions.Compiled);
+
         /// <summary>多字符的纯符号分隔符，切分后同样原样跳过。</summary>
         internal const string LoneDelimiterStrings = "+++";
 

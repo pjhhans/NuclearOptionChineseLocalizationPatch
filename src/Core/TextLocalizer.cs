@@ -302,6 +302,16 @@ namespace NuclearOptionChineseLocalizationPatch.Core
                 if (unquoted.Length > 0) text = unquoted;
             }
 
+            // ②c mod 自绘 HUD 的小数字距标记：`12.7` 被 ScopeText.Mark 改写成 `12 . 7`
+            //     （小数点两侧各插一个空格）。这是画字用的排版手段、却发生在 set_text 之前，
+            //     于是带小数的名字（12.7MM MG EMPLACEMENT / AFV8 0.5 …）在词表里永远对不上。
+            //     折叠回正常写法再走后面的流程；译文不含这条标记，界面上也不会多出空格。
+            if (text.IndexOf(" .", StringComparison.Ordinal) >= 0)
+            {
+                string tight = TokenPatterns.SpacedDecimal.Replace(text, ".");
+                if (tight.Length > 0 && tight != text) text = tight;
+            }
+
             // ③ 翻译关闭时：把已显示的中文还原回原文，而不是放着不管。
             if (!Enabled) return Restore(text);
 
@@ -509,7 +519,13 @@ namespace NuclearOptionChineseLocalizationPatch.Core
 
             if (HasChinese(text)) return text;
             if (_exclusions.IsKeptTerm(text)) return text;
-            if (IsNoise(text.Trim())) return text;
+
+            // 读数形状早退。**但数据侧登记过短后缀片段的不算读数** ——
+            // `25 VEH` 是车辆计数（StrViewBuilder 直接拼 " VEH"），形状上恰好是
+            // 「数字 + ≤6 个字母」，被 NoiseValueUnit 判成噪声后连片段都不试，
+            // 于是永远英文。后缀片段（`<< VEH`）就是「这个词要翻」的显式声明，
+            // 让它把这类串捞回来。代价只有一次 4~6 字符的 EndsWith。
+            if (IsNoise(text.Trim()) && !_table.EndsWithShortSuffix(text.Trim())) return text;
 
             bool isForceScoped = _table.IsForceScoped(scope);
 
