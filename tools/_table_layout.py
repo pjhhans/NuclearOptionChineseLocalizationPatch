@@ -106,6 +106,8 @@ SCOPE_GROUPS = {
         "confirm Text (TMP)", "confirmLeaveText",
         # 2026-10-19 补录：Aryx 机型（F-22E / F-99）实机 missing.json 实发
         "Status",
+        # 2026-10-31 补录：任务面板（MissionTaskPart）标题/副标题/类别，实机 missing.json 发实。
+        "Sub", "Task family",
         # 2026-10-20 补录：OritasySS 电台面板（站名按 12 字符截断后送进来）
         "tx",
     ],
@@ -118,6 +120,9 @@ SCOPE_GROUPS = {
     "bs": [
         "BS:Caption", "BS:CheckMark", "BS:Label", "BS:Name", "BS:Text",
         "BS:Title", "BS:Value", "BS:Word",
+        # 2026-10-31 补录：涂装编辑器 / 合同板 / 高指挥车道提示（实机 missing.json 发实）。
+        "BS:Sub", "BS:LaneNote 0", "BS:LaneNote 1", "BS:LaneNote 2",
+        "BS:LaneNote 3",
         # 2026-10-29 新增：mod 航电控制台（AvConsole）的**备选作用域**。
         # 控制台子树用的是通用节点名（Title/Label），会被本体同名词条串味，
         # 所以按「BS: + 控制台根节点名」单独成域。见 PatchHelpers.ConsoleScopeOf。
